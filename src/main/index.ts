@@ -340,7 +340,7 @@ async function generateBrowserHarnessScript(
   attempt: number
 ): Promise<string> {
   const prompt = `You are generating Python code for browser-harness, a CDP browser automation harness.
-The code will be piped directly to the browser-harness CLI and will control the already-visible live preview browser.
+The code will be piped directly to the browser-harness CLI via stdin and will control the already-visible live preview browser.
 
 Task: ${task.name}
 Target URL: ${task.targetUrl}
@@ -352,38 +352,116 @@ ${observation}
 Previous failure or retry context:
 ${previousFailure || "None"}
 
-Available helper functions include:
-- goto_url(url)
-- wait_for_load()
-- page_info() -> dict with url/title/viewport data
-- js(source) -> evaluate JavaScript in the page
-- click_at_xy(x, y)
-- type_text(text)
+Available helper functions (all are synchronous, imported into global scope):
 
-Required output:
-- Return only Python code. No markdown fences.
-- The code must call emit(...) for progress and final result.
-- Use this exact emit helper:
+Navigation & Page:
+- goto_url(url)                    # Navigate to URL
+- wait_for_load()                  # Wait for page load event
+- page_info() -> dict              # Returns {"url", "title", "w", "h", "sx", "sy", "pw", "ph"}
+- js(expression) -> any            # Evaluate JavaScript in the page, returns the result
+
+Typing & Forms (USE THESE for all form input):
+- fill_input(selector, text, clear_first=True, timeout=0.0)
+    # THE CORRECT WAY to fill text inputs. Focuses the element, clears it, types character-by-character via real key events, then dispatches input+change events so frameworks (React, Vue) see the update.
+    # Example: fill_input("#user-name", "standard_user")
+    # Example: fill_input("input[name='password']", "secret_sauce")
+    # Pass timeout=3.0 to wait for the element to appear first.
+- press_key(key)                   # Press a single key: "Enter", "Tab", "Escape", "Backspace", "ArrowDown", etc.
+- type_text(text)                  # Low-level CDP Input.insertText — only use for non-input contexts (e.g., contenteditable). For form fields, ALWAYS use fill_input().
+
+Clicking:
+- click_at_xy(x, y)               # Click at viewport coordinates. x and y MUST be integers (int), NOT dicts.
+
+Scrolling:
+- scroll(x, y, dy=-300)           # Scroll at position (x,y) by dy pixels (negative = scroll down)
+
+Waiting:
+- wait_for_element(selector, timeout=5.0) -> bool   # Wait for a CSS selector to appear in the DOM. Returns True/False.
+
+Screenshots:
+- capture_screenshot(path=None, full=False) -> str   # Save PNG, returns path. If path is None, saves to temp.
+
+CRITICAL RULES — Read these carefully:
+1. js() can return a dict, list, string, int, bool, or None. NEVER pass the raw return value of js() directly to click_at_xy(). Extract coordinates first:
+   WRONG: click_at_xy(js("..."))
+   CORRECT:
+     el = js("(() => { const e = document.querySelector('#btn'); const r = e.getBoundingClientRect(); return {x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2)}; })()")
+     click_at_xy(int(el["x"]), int(el["y"]))
+
+2. For ALL text input fields, use fill_input(css_selector, text). Do NOT use click_at_xy + type_text for form fields — that approach skips framework event listeners and leaves forms broken.
+
+3. String literals in Python: Use single quotes for short strings. For multi-line JS passed to js(), use triple-quoted strings (\"\"\"...\"\"\"). Never leave string literals unterminated.
+
+4. Always import json at the top of your script.
+
+5. After fill_input or click_at_xy on a submit button, call wait_for_load() or time.sleep(1) then re-inspect with page_info() or js() to verify the page changed.
+
+6. Use time.sleep(0.5) between actions to let the page settle. Import time at the top.
+
+Required output format:
+- Return ONLY valid Python code. No markdown fences.
+- The code must call emit(...) for progress and exactly one final result.
+- Define this emit helper at the top:
+import json
+import time
+
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
-- Emit steps with {"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."}.
-- Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}. Ensure that the "summary" is:
-  - For standard verification tasks: A short, natural-language 1-line explanation of the final outcome (e.g., "Successfully logged in and verified the settings tab is visible.").
-  - For exploratory, audit, or bug-finding tasks (e.g., "Explore the website, test forms, and find all bugs"): A clean, detailed, multi-line bulleted list outlining every identified bug, broken flow, or validation result.
+
+- Emit progress steps: emit({"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."})
+- Emit exactly one final event: emit({"final": True, "ok": bool, "summary": "...", "error": "..."})
+  - For standard verification tasks: summary is a short 1-line explanation.
+  - For exploratory/audit/bug-finding tasks: summary is a multi-line bulleted list of every bug or finding.
 
 Instructions for the Agent:
-- Start by opening the target URL, unless you are already on a logged-in dashboard/subpage that is closer to the task goal.
-- If the task is a conceptual check, diagnostic, or question (e.g., asking if a feature exists, checking version numbers, or answering conceptual questions), you can write a script that answers the question directly in the final summary event based on your DOM observations (setting ok=True) and finishes immediately without needing to perform extra browser actions.
-- Reuse existing logged-in sessions! If the browser state shows you are already logged in or have session state, do not trigger a fresh login sequence.
-- Actively Navigate! If the target elements (like a login or checkout button) are not on the landing page, look at the interactive elements list for navigation links (e.g. "Sign in", "Login", "Register", "Menu", "Sign Up"). Click one of them to navigate to the correct page first. Do not fail on the landing page if the controls aren't there.
-- Inspect DOM state with js(...) before acting.
-- Choose actions from observed DOM and page state. Do not assume this is GitHub-specific.
-- Use click_at_xy(...) for clicks and type_text(...) for typing.
-- After each action, wait_for_load() or verify DOM/URL changes with js(...) and page_info().
-- If an action fails, try one alternate reasonable selector/coordinate before final failure.
+- Start by opening the target URL with goto_url(), then wait_for_load(), then time.sleep(1).
+- Use fill_input() for ALL form fields (login, search, checkout, etc.).
+- Use click_at_xy() only for buttons, links, and non-input elements. Get coordinates from the DOM observation or from js() — always extract int x,y from the returned dict.
+- Use press_key("Enter") to submit forms after filling inputs.
+- After each major action, verify the result with page_info() or js() before proceeding.
+- If the task is a conceptual check or question, answer directly in the final summary based on DOM observations.
+- Reuse existing logged-in sessions. Do not re-login if already authenticated.
+- If target elements aren't on the landing page, navigate to them via links in the interactive elements list.
 - Never report a bug unless you have verified it twice after waiting, scrolling, and checking the correct page.
 - If navigation fails or the URL becomes chrome-error://chromewebdata, mark the test as infrastructure failed, not a website bug.
 - If the task cannot be fully verified, return ok=False with a clear error and what was observed.
+- Wrap the entire script in a try/except that emits a final error event on exception.
+
+Example login pattern:
+import json
+import time
+
+def emit(payload):
+    print("BH_EVENT " + json.dumps(payload), flush=True)
+
+try:
+    emit({"instruction": "Navigate to login page", "status": "running"})
+    goto_url("https://example.com/login")
+    wait_for_load()
+    time.sleep(1)
+    emit({"instruction": "Navigate to login page", "status": "done", "result": "Page loaded"})
+
+    emit({"instruction": "Fill login form", "status": "running"})
+    fill_input("#username", "myuser", timeout=3.0)
+    time.sleep(0.3)
+    fill_input("#password", "mypass")
+    time.sleep(0.3)
+    emit({"instruction": "Fill login form", "status": "done", "result": "Credentials entered"})
+
+    emit({"instruction": "Submit login", "status": "running"})
+    btn = js("(() => { const e = document.querySelector('button[type=submit]'); if(!e) return null; const r = e.getBoundingClientRect(); return {x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2)}; })()")
+    if btn:
+        click_at_xy(int(btn["x"]), int(btn["y"]))
+    else:
+        press_key("Enter")
+    wait_for_load()
+    time.sleep(1)
+    info = page_info()
+    emit({"instruction": "Submit login", "status": "done", "result": "Landed on " + info.get("url", "")})
+
+    emit({"final": True, "ok": True, "summary": "Successfully logged in."})
+except Exception as exc:
+    emit({"final": True, "ok": False, "summary": "Script failed.", "error": str(exc)})
 `;
 
   try {
