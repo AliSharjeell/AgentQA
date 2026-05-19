@@ -381,6 +381,8 @@ Instructions for the Agent:
 - Use click_at_xy(...) for clicks and type_text(...) for typing.
 - After each action, wait_for_load() or verify DOM/URL changes with js(...) and page_info().
 - If an action fails, try one alternate reasonable selector/coordinate before final failure.
+- Never report a bug unless you have verified it twice after waiting, scrolling, and checking the correct page.
+- If navigation fails or the URL becomes chrome-error://chromewebdata, mark the test as infrastructure failed, not a website bug.
 - If the task cannot be fully verified, return ok=False with a clear error and what was observed.
 `;
 
