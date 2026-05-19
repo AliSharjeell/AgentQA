@@ -2,6 +2,8 @@
  * QA Automation AI — Renderer entry point.
  */
 import { useEffect, useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Play,
   Pause,
@@ -469,15 +471,48 @@ function StatusIcon({ status, size = 14 }: { status: QaTask["status"]; size?: nu
 
 function ReportBadge({ report }: { report: QaReport }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const statusColor =
-    report.overallStatus === "pass" ? "text-green-400 bg-green-400/10 border-green-400/20" :
-    report.overallStatus === "fail" ? "text-red-400 bg-red-400/10 border-red-400/20" :
-    "text-yellow-400 bg-yellow-400/10 border-yellow-400/20";
+
+  const statusBadge =
+    report.overallStatus === "pass" ? "✅ **PASS** — All steps completed successfully" :
+    report.overallStatus === "fail" ? "❌ **FAIL** — Task could not be completed" :
+    "⚠️  **PARTIAL** — Some steps completed, some failed";
+
+  const markdownReport = [
+    statusBadge,
+    "",
+    `## Task: ${report.taskName}`,
+    "",
+    `**Target URL:** ${report.targetUrl}`,
+    `**Started:** ${new Date(report.startTime).toLocaleString()}`,
+    `**Duration:** ${(report.durationMs / 1000).toFixed(1)}s`,
+    "",
+    `## Summary`,
+    "",
+    report.summary,
+    "",
+    `## Step-by-Step Results`,
+    "",
+    ...report.steps.map((step, i) => {
+      const icon = step.status === "done" ? "✅" : step.status === "failed" ? "❌" : "⏭️ ";
+      const status = step.status === "done" ? "Completed" : step.status === "failed" ? "Failed" : "Skipped";
+      const lines = [
+        `### ${i + 1}. ${step.instruction}`,
+        `**Status:** ${icon} ${status}`,
+      ];
+      if (step.result) lines.push(`**Result:** ${step.result}`);
+      if (step.error) lines.push(`**Error:** ${step.error}`);
+      if (step.screenshotPath) lines.push(`**Screenshot:** Saved at \`${step.screenshotPath}\``);
+      lines.push("");
+      return lines.join("\n");
+    }),
+    "",
+    report.aiReasoning ? `## AI Reasoning\n\n${report.aiReasoning}` : ""
+  ].join("\n");
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] ${statusColor}`}>
+        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] ${report.overallStatus === "pass" ? "text-green-400 bg-green-400/10 border-green-400/20" : report.overallStatus === "fail" ? "text-red-400 bg-red-400/10 border-red-400/20" : "text-yellow-400 bg-yellow-400/10 border-yellow-400/20"}`}>
           {report.overallStatus === "pass" ? "✅ PASS" : report.overallStatus === "fail" ? "❌ FAIL" : "⚠️ PARTIAL"}
         </span>
         <span className="text-[10px] text-zinc-600">{report.passedSteps}/{report.totalSteps} passed</span>
@@ -491,23 +526,9 @@ function ReportBadge({ report }: { report: QaReport }): JSX.Element {
       </div>
 
       {expanded && (
-        <div className="rounded-lg border border-white/8 bg-zinc-950 p-3 space-y-2 text-[11px]">
-          <p className="text-zinc-400 leading-relaxed">{report.summary}</p>
-          <div className="grid grid-cols-4 gap-2 text-center">
-            <div className="rounded-lg bg-green-400/10 p-1.5"><p className="text-green-400">{report.passedSteps}</p><p className="text-[9px] text-zinc-600">Passed</p></div>
-            <div className="rounded-lg bg-red-400/10 p-1.5"><p className="text-red-400">{report.failedSteps}</p><p className="text-[9px] text-zinc-600">Failed</p></div>
-            <div className="rounded-lg bg-zinc-700/50 p-1.5"><p className="text-zinc-300">{report.totalSteps}</p><p className="text-[9px] text-zinc-600">Total</p></div>
-            <div className="rounded-lg bg-indigo-400/10 p-1.5"><p className="text-indigo-400">{(report.durationMs / 1000).toFixed(1)}s</p><p className="text-[9px] text-zinc-600">Duration</p></div>
-          </div>
-          <div className="border-t border-white/8 pt-2 space-y-1">
-            {report.steps.map((step, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <span className={step.status === "done" ? "text-green-400" : step.status === "failed" ? "text-red-400" : "text-zinc-600"}>
-                  {step.status === "done" ? "✅" : step.status === "failed" ? "❌" : "⏳"}
-                </span>
-                <span className="text-zinc-300 flex-1">{step.instruction}</span>
-              </div>
-            ))}
+        <div className="rounded-lg border border-white/8 bg-zinc-950 p-4 overflow-y-auto max-h-96">
+          <div className="prose prose-invert prose-sm max-w-none text-zinc-300">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdownReport}</ReactMarkdown>
           </div>
         </div>
       )}
