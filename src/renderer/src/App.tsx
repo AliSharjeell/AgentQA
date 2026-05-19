@@ -140,28 +140,30 @@ export default function App(): JSX.Element {
         {/* ── Main Area ── */}
         <div className="main-area relative min-w-0 flex-1 overflow-hidden">
           {/* Browser toolbar strip */}
-          <div className="window-no-drag fixed left-72 right-0 top-0 z-10 flex h-12 items-center gap-1 border-b border-white/8 bg-zinc-900/80 px-4 backdrop-blur-sm">
-            <button
-              className="browser-nav-btn"
-              onClick={() => window.qaApi?.goBack()}
-              title="Back"
-            >
-              <ArrowLeft size={14} />
-            </button>
-            <button
-              className="browser-nav-btn"
-              onClick={() => window.qaApi?.goForward()}
-              title="Forward"
-            >
-              <ArrowRight size={14} />
-            </button>
-            <button
-              className="browser-nav-btn"
-              onClick={() => window.qaApi?.refreshBrowser()}
-              title="Refresh"
-            >
-              <RefreshCw size={14} />
-            </button>
+          <div className="window-no-drag fixed left-72 right-0 top-0 z-10 flex h-12 items-center gap-3 border-b border-white/8 bg-zinc-900/80 px-4 backdrop-blur-sm">
+            <div className="flex items-center gap-1">
+              <button
+                className="browser-nav-btn"
+                onClick={() => window.qaApi?.goBack()}
+                title="Back"
+              >
+                <ArrowLeft size={14} />
+              </button>
+              <button
+                className="browser-nav-btn"
+                onClick={() => window.qaApi?.goForward()}
+                title="Forward"
+              >
+                <ArrowRight size={14} />
+              </button>
+              <button
+                className="browser-nav-btn"
+                onClick={() => window.qaApi?.refreshBrowser()}
+                title="Refresh"
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
 
             {/* URL input */}
             <div className="relative flex-1 max-w-2xl mx-auto">
@@ -194,9 +196,11 @@ export default function App(): JSX.Element {
               )}
             </div>
 
-            <span className="text-[10px] text-zinc-600 truncate max-w-[200px]">
-              {browserState.title && browserState.title !== browserState.url ? browserState.title : ""}
-            </span>
+            {browserState.title && browserState.title !== browserState.url && (
+              <span className="text-[10px] text-zinc-400 bg-white/5 border border-white/5 px-2.5 py-1 rounded-full truncate max-w-[180px] select-none">
+                {browserState.title}
+              </span>
+            )}
           </div>
 
           {/* Browser preview area */}
