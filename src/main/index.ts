@@ -367,7 +367,9 @@ Required output:
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
 - Emit steps with {"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."}.
-- Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}. Ensure that "summary" is a natural-language, short 1-line explanation of the final outcome (e.g., "Successfully logged in and verified the settings tab is visible." or "Failed to complete checkout because the card input was disabled.").
+- Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}. Ensure that the "summary" is:
+  - For standard verification tasks: A short, natural-language 1-line explanation of the final outcome (e.g., "Successfully logged in and verified the settings tab is visible.").
+  - For exploratory, audit, or bug-finding tasks (e.g., "Explore the website, test forms, and find all bugs"): A clean, detailed, multi-line bulleted list outlining every identified bug, broken flow, or validation result.
 
 Instructions for the Agent:
 - Start by opening the target URL, unless you are already on a logged-in dashboard/subpage that is closer to the task goal.
