@@ -195,12 +195,6 @@ export default function App(): JSX.Element {
                 </button>
               )}
             </div>
-
-            {browserState.title && browserState.title !== browserState.url && (
-              <span className="text-[10px] text-zinc-400 bg-white/5 border border-white/5 px-2.5 py-1 rounded-full truncate max-w-[180px] select-none">
-                {browserState.title}
-              </span>
-            )}
           </div>
 
           {/* Browser preview area */}
