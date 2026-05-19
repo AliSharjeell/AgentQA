@@ -580,40 +580,40 @@ function SettingsPanel(): JSX.Element {
 
   return (
     <div className="mt-4 flex-1 space-y-4 overflow-y-auto">
-      <p className="text-[11px] text-zinc-500 uppercase tracking-wide">Settings</p>
+      <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider select-none">Settings</p>
 
       <div className="space-y-3">
         <div>
           <label className="mb-1.5 block text-xs text-zinc-400">API Provider</label>
-          <select className="input w-full text-sm" value={settings.apiProvider} onChange={(e) => setSettings((s) => ({ ...s, apiProvider: e.target.value }))}>
+          <select className="input w-full" value={settings.apiProvider} onChange={(e) => setSettings((s) => ({ ...s, apiProvider: e.target.value }))}>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="openai">OpenAI</option>
           </select>
         </div>
         <div>
           <label className="mb-1.5 block text-xs text-zinc-400">API Key</label>
-          <input className="input w-full text-sm" type="password" placeholder="sk-..." value={settings.apiKey} onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))} />
+          <input className="input w-full" type="password" placeholder="sk-..." value={settings.apiKey} onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))} />
         </div>
         <div>
           <label className="mb-1.5 block text-xs text-zinc-400">Model</label>
-          <input className="input w-full text-sm" placeholder="claude-sonnet-4-20250514" value={settings.model} onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))} />
+          <input className="input w-full" placeholder="claude-sonnet-4-20250514" value={settings.model} onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))} />
         </div>
         <div>
           <label className="mb-1.5 block text-xs text-zinc-400">Base URL (optional)</label>
-          <input className="input w-full text-sm" placeholder="Leave empty for default" value={settings.apiBaseUrl} onChange={(e) => setSettings((s) => ({ ...s, apiBaseUrl: e.target.value }))} />
+          <input className="input w-full" placeholder="Leave empty for default" value={settings.apiBaseUrl} onChange={(e) => setSettings((s) => ({ ...s, apiBaseUrl: e.target.value }))} />
         </div>
       </div>
 
       <div className="flex gap-2">
-        <button className="primary-button flex-1 !h-9 text-xs" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save Settings"}</button>
-        <button className="secondary-button !h-9 text-xs" onClick={handleTest} disabled={testing || !settings.apiKey}>
+        <button className="primary-button flex-1" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save Settings"}</button>
+        <button className="secondary-button" onClick={handleTest} disabled={testing || !settings.apiKey}>
           {testing ? <Loader2 size={12} className="animate-spin" /> : null}
           Test
         </button>
       </div>
 
       {testResult && (
-        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${testResult.ok ? "border-green-400/20 bg-green-400/10 text-green-400" : "border-red-400/20 bg-red-400/10 text-red-400"}`}>
+        <div className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-xs ${testResult.ok ? "border-green-500/20 bg-green-500/5 text-green-400" : "border-red-500/20 bg-red-500/5 text-red-400"}`}>
           {testResult.ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
           {testResult.message}
         </div>
