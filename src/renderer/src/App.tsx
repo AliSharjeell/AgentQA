@@ -118,8 +118,17 @@ export default function App(): JSX.Element {
       <div className="flex min-h-screen">
         {/* ── Sidebar ── */}
         <aside className="mica-sidebar window-drag sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden px-4 py-4">
-          <div className="flex items-center py-1.5">
-            <h1 className="text-sm font-semibold text-white tracking-wide">QA Automation AI</h1>
+          <div className="flex flex-col gap-3 pb-3 border-b border-white/5">
+            <div className="flex items-center py-1.5">
+              <h1 className="text-sm font-semibold text-white tracking-wide">QA Automation AI</h1>
+            </div>
+            <button
+              className="inline-flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition duration-200 active:scale-[0.98] select-none"
+              onClick={() => setPage(page === "main" ? "settings" : "main")}
+            >
+              <Settings size={14} />
+              {page === "main" ? "Settings" : "Back to Tasks"}
+            </button>
           </div>
 
           {page === "settings" ? (
@@ -134,16 +143,6 @@ export default function App(): JSX.Element {
               browserUrl={browserState.url}
             />
           )}
-
-          <div className="mt-auto border-t border-white/5 pt-3">
-            <button
-              className="inline-flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition duration-200 active:scale-[0.98] select-none"
-              onClick={() => setPage(page === "main" ? "settings" : "main")}
-            >
-              <Settings size={14} />
-              {page === "main" ? "Settings" : "Back to Tasks"}
-            </button>
-          </div>
         </aside>
 
         {/* ── Main Area ── */}
