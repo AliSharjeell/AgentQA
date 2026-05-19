@@ -87,7 +87,12 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
 
   try {
     emitProgress({ type: "task_progress", taskId: task.id, message: "Running browser-harness in preview..." });
-    const harnessResult = await runBrowserHarnessScript(task, (event) => {
+    const settings = loadSettings();
+    const harnessScript = settings.apiKey
+      ? await generateBrowserHarnessScript(task, settings)
+      : buildGenericBrowserHarnessScript(task);
+
+    const harnessResult = await runBrowserHarnessScript(harnessScript, (event) => {
       if (event.status === "running") {
         addStep(event.instruction, "running");
         return;
@@ -170,112 +175,107 @@ type HarnessCheckResult = {
   error?: string;
 };
 
-function runBrowserHarnessScript(
-  task: QaTask,
-  onStep: (event: HarnessStepEvent) => void
-): Promise<HarnessCheckResult> {
-  const isRepositoryTask = isBrowserHarnessRepositoryTask(task);
-  const isRepoOwnerProfileTask = isBrowserHarnessRepoOwnerProfileTask(task);
-  const script = `
+async function generateBrowserHarnessScript(task: QaTask, settings: AppSettings): Promise<string> {
+  const prompt = `You are generating Python code for browser-harness, a CDP browser automation harness.
+The code will be piped directly to the browser-harness CLI and will control the already-visible live preview browser.
+
+Task: ${task.name}
+Target URL: ${task.targetUrl}
+
+Available helper functions include:
+- goto_url(url)
+- wait_for_load()
+- page_info() -> dict with url/title/viewport data
+- js(source) -> evaluate JavaScript in the page
+- click_at_xy(x, y)
+- type_text(text)
+
+Required output:
+- Return only Python code. No markdown fences.
+- The code must call emit(...) for progress and final result.
+- Use this exact emit helper:
+def emit(payload):
+    print("BH_EVENT " + json.dumps(payload), flush=True)
+- Emit steps with {"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."}.
+- Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}.
+- Start by opening the target URL.
+- Prefer DOM inspection via js(...) and click_at_xy(...) for browser actions.
+- If the task cannot be fully verified, return ok=False with a clear error.
+`;
+
+  try {
+    const response = settings.apiProvider === "openai"
+      ? await callOpenAiForHarnessScript(settings, prompt)
+      : await callAnthropicForHarnessScript(settings, prompt);
+    return normalizeHarnessScript(response);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return buildGenericBrowserHarnessScript(task, `Could not generate a task-specific harness script: ${message}`);
+  }
+}
+
+async function callAnthropicForHarnessScript(settings: AppSettings, prompt: string): Promise<string> {
+  const res = await fetch(`${settings.apiBaseUrl || "https://api.anthropic.com"}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: settings.model || "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!res.ok) {
+    throw new Error(`Anthropic-compatible API returned ${res.status}: ${await res.text()}`);
+  }
+
+  const data = await res.json() as { content?: Array<{ type?: string; text?: string }> };
+  return data.content?.find((part) => part.type === "text")?.text ?? "";
+}
+
+async function callOpenAiForHarnessScript(settings: AppSettings, prompt: string): Promise<string> {
+  const res = await fetch(`${settings.apiBaseUrl || "https://api.openai.com/v1"}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${settings.apiKey}`
+    },
+    body: JSON.stringify({
+      model: settings.model || "gpt-4.1-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0
+    })
+  });
+
+  if (!res.ok) {
+    throw new Error(`OpenAI-compatible API returned ${res.status}: ${await res.text()}`);
+  }
+
+  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
+function normalizeHarnessScript(script: string): string {
+  const trimmed = script.trim();
+  const fenceMatch = trimmed.match(/```(?:python)?\s*([\s\S]*?)```/i);
+  return fenceMatch ? fenceMatch[1].trim() : trimmed;
+}
+
+function buildGenericBrowserHarnessScript(task: QaTask, note?: string): string {
+  return `
 import json
 import time
 
 target_url = ${JSON.stringify(task.targetUrl)}
 task_name = ${JSON.stringify(task.name)}
-is_repository_task = ${isRepositoryTask ? "True" : "False"}
-is_repo_owner_profile_task = ${isRepoOwnerProfileTask ? "True" : "False"}
+note = ${JSON.stringify(note ?? "")}
 
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
-
-def find_repo_tab_rect():
-    return js("""
-(() => {
-  const links = Array.from(document.querySelectorAll('a'));
-  const link = links.find((item) => /Repositories/i.test(item.textContent || ''));
-  if (!link) return null;
-  const rect = link.getBoundingClientRect();
-  return {
-    x: Math.round(rect.left + rect.width / 2),
-    y: Math.round(rect.top + rect.height / 2),
-    text: (link.textContent || '').trim()
-  };
-})()
-""")
-
-def repository_state():
-    return js("""
-(() => {
-  const repoInput = document.querySelector('input[placeholder*="repository" i]');
-  const repoList = document.querySelector('[data-testid="repositories-list"], [itemprop="owns"], a[itemprop="name codeRepository"]');
-  const links = Array.from(document.querySelectorAll('a'));
-  const repoLink = links.find((item) => /Repositories/i.test(item.textContent || ''));
-  const selected = repoLink && (
-    repoLink.getAttribute('aria-current') === 'page' ||
-    repoLink.classList.contains('selected') ||
-    repoLink.parentElement?.classList.contains('selected') ||
-    getComputedStyle(repoLink).fontWeight === '600'
-  );
-  return {
-    ok: Boolean(repoInput || repoList || selected || /[?&]tab=repositories\\b/i.test(location.href)),
-    url: location.href,
-    title: document.title,
-    hasSearch: Boolean(repoInput),
-    hasRepoList: Boolean(repoList),
-    selected: Boolean(selected)
-  };
-})()
-""")
-
-def first_repository_rect():
-    return js("""
-(() => {
-  const selectors = [
-    'a[itemprop="name codeRepository"]',
-    '[data-testid="repositories-list"] a[href*="/"]',
-    'li[itemprop="owns"] a[href*="/"]'
-  ];
-  for (const selector of selectors) {
-    const link = Array.from(document.querySelectorAll(selector)).find((item) => {
-      const href = item.getAttribute('href') || '';
-      return /^\\/[^\\/]+\\/[^\\/]+\\/?$/.test(href);
-    });
-    if (link) {
-      const rect = link.getBoundingClientRect();
-      return {
-        x: Math.round(rect.left + rect.width / 2),
-        y: Math.round(rect.top + rect.height / 2),
-        href: link.href,
-        text: (link.textContent || '').trim()
-      };
-    }
-  }
-  return null;
-})()
-""")
-
-def owner_profile_rect():
-    return js("""
-(() => {
-  const path = location.pathname.split('/').filter(Boolean);
-  const owner = path[0];
-  if (!owner || path.length < 2) return null;
-  const link = Array.from(document.querySelectorAll('a[href]')).find((item) => {
-    const href = item.getAttribute('href') || '';
-    const text = (item.textContent || '').trim();
-    return href === '/' + owner || href === '/' + owner + '/' || text === owner;
-  });
-  if (!link) return null;
-  const rect = link.getBoundingClientRect();
-  return {
-    x: Math.round(rect.left + rect.width / 2),
-    y: Math.round(rect.top + rect.height / 2),
-    owner,
-    href: link.href,
-    text: (link.textContent || '').trim()
-  };
-})()
-""")
 
 try:
     emit({"instruction": "Open " + target_url, "status": "running"})
@@ -284,90 +284,17 @@ try:
     info = page_info()
     emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
 
-    if is_repo_owner_profile_task:
-        state = repository_state()
-        if not state.get("ok"):
-            emit({"instruction": "Open repositories list", "status": "running"})
-            rect = find_repo_tab_rect()
-            if not rect:
-                raise Exception("Could not find the Repositories tab in the preview browser.")
-            click_at_xy(rect["x"], rect["y"])
-            wait_for_load()
-            time.sleep(1)
-            state = repository_state()
-            if not state.get("ok"):
-                raise Exception("Repositories list did not open. Current URL: " + state.get("url", "unknown"))
-            emit({"instruction": "Open repositories list", "status": "done", "result": "Repositories view is active."})
-
-        emit({"instruction": "Open a repository from the list", "status": "running"})
-        repo_rect = first_repository_rect()
-        if not repo_rect:
-            raise Exception("Could not find a repository link in the repositories list.")
-        click_at_xy(repo_rect["x"], repo_rect["y"])
-        wait_for_load()
-        time.sleep(1)
-        repo_info = page_info()
-        emit({
-            "instruction": "Open a repository from the list",
-            "status": "done",
-            "result": "Opened repository " + repo_info.get("url", "")
-        })
-
-        emit({"instruction": "Open the repository owner's profile", "status": "running"})
-        owner_rect = owner_profile_rect()
-        if not owner_rect:
-            raise Exception("Could not find the repository owner profile link from inside the repository.")
-        expected_owner = owner_rect.get("owner", "")
-        click_at_xy(owner_rect["x"], owner_rect["y"])
-        wait_for_load()
-        time.sleep(1)
-        profile_info = page_info()
-        profile_url = profile_info.get("url", "")
-        if "/" + expected_owner not in profile_url or profile_url.rstrip("/").count("/") > 3:
-            raise Exception("Owner profile did not open. Current URL: " + profile_url)
-        emit({
-            "instruction": "Open the repository owner's profile",
-            "status": "done",
-            "result": "Opened owner profile " + profile_url
-        })
-        emit({
-            "final": True,
-            "ok": True,
-            "summary": "From inside a repository, the owner profile link opened the main GitHub profile successfully."
-        })
-    elif is_repository_task:
-        emit({"instruction": "Click the Repositories tab", "status": "running"})
-        rect = find_repo_tab_rect()
-        if not rect:
-            raise Exception("Could not find the Repositories tab in the preview browser.")
-        click_at_xy(rect["x"], rect["y"])
-        wait_for_load()
-        time.sleep(1)
-        state = repository_state()
-        if not state.get("ok"):
-            raise Exception("Repositories tab did not become active. Current URL: " + state.get("url", "unknown"))
-        emit({
-            "instruction": "Click the Repositories tab",
-            "status": "done",
-            "result": "Repositories view is active at " + state.get("url", "unknown")
-        })
-        emit({
-            "final": True,
-            "ok": True,
-            "summary": "The Repositories tab opened successfully in the live preview browser."
-        })
-    else:
-        info = page_info()
-        emit({
-            "instruction": "Inspect page state with browser-harness",
-            "status": "done",
-            "result": "Active page: " + info.get("title", "") + " (" + info.get("url", target_url) + ")"
-        })
-        emit({
-            "final": True,
-            "ok": True,
-            "summary": "Browser-harness opened the target in the live preview browser. No task-specific harness routine exists yet for: " + task_name
-        })
+    emit({
+        "instruction": "Inspect page state with browser-harness",
+        "status": "done",
+        "result": "Active page: " + info.get("title", "") + " (" + info.get("url", target_url) + ")"
+    })
+    emit({
+        "final": True,
+        "ok": False,
+        "summary": "Browser-harness opened the page, but no task-specific script was generated.",
+        "error": note or "No LLM-generated harness script was available for: " + task_name
+    })
 except Exception as exc:
     emit({
         "instruction": "Run browser-harness repository check",
@@ -381,6 +308,12 @@ except Exception as exc:
         "error": str(exc)
     })
 `;
+}
+
+function runBrowserHarnessScript(
+  script: string,
+  onStep: (event: HarnessStepEvent) => void
+): Promise<HarnessCheckResult> {
 
   return new Promise((resolve) => {
     const child = spawn("browser-harness", {
