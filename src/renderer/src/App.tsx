@@ -178,31 +178,22 @@ export default function App(): JSX.Element {
             <div className="relative flex-1 max-w-2xl mx-auto">
               <input
                 className="browser-url-input"
-                placeholder="Enter URL..."
-                defaultValue={browserState.url}
+                placeholder="Enter URL or search..."
+                value={urlInputVal}
+                onChange={(e) => setUrlInputVal(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && window.qaApi) {
-                    const url = (e.target as HTMLInputElement).value;
-                    if (url) {
-                      const urlToUse = url.startsWith("http") ? url : `https://${url}`;
-                      void window.qaApi.navigateTo({ url: urlToUse });
-                    }
+                  if (e.key === "Enter") {
+                    handleNavigate();
                   }
                 }}
               />
-              {browserState.ready && (
-                <button
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-zinc-200 transition-colors duration-150"
-                  onClick={() => {
-                    if (window.qaApi && browserState.url) {
-                      void window.qaApi.navigateTo({ url: browserState.url });
-                    }
-                  }}
-                  title="Reload"
-                >
-                  ↻
-                </button>
-              )}
+              <button
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 transition-colors duration-150 active:scale-90"
+                onClick={handleNavigate}
+                title="Search / Go"
+              >
+                <Search size={13} />
+              </button>
             </div>
           </div>
 
