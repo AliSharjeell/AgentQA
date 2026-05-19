@@ -153,16 +153,21 @@ function createBrowserView(): void {
 function attachBrowserViewToMain(): void {
   if (!mainWindow || !browserView) return;
   mainWindow.addBrowserView(browserView);
-  const bounds = mainWindow.getContentBounds();
-  // Position browser view in the right portion of the window
-  const sidebarWidth = 340;
+  resizeBrowserView();
+  mainWindow.on("resize", resizeBrowserView);
+}
+
+function resizeBrowserView(): void {
+  if (!mainWindow || !browserView) return;
+  const [winW, winH] = mainWindow.getContentSize();
+  const sidebarW = 320;
+  const titleH = 48;
   browserView.setBounds({
-    x: sidebarWidth,
-    y: 48, // below title bar
-    width: bounds.width - sidebarWidth,
-    height: bounds.height - 48
+    x: sidebarW,
+    y: titleH,
+    width: Math.max(600, winW - sidebarW),
+    height: Math.max(400, winH - titleH)
   });
-  browserView.setAutoResize({ width: true, height: true, horizontal: true, vertical: true });
 }
 
 function sendBrowserState(): void {
@@ -185,8 +190,9 @@ function createWindow(): void {
       symbolColor: "#d4d4d8",
       height: 48
     },
-    backgroundColor: "#00000000",
+    backgroundColor: "#09090b",
     backgroundMaterial: process.platform === "win32" ? "mica" : undefined,
+    transparent: false,
     roundedCorners: true,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.mjs"),
@@ -201,19 +207,6 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
-
-  // Resize browser view when main window resizes
-  mainWindow.on("resize", () => {
-    if (!mainWindow || !browserView) return;
-    const bounds = mainWindow.getContentBounds();
-    const sidebarWidth = 340;
-    browserView.setBounds({
-      x: sidebarWidth,
-      y: 48,
-      width: Math.max(600, bounds.width - sidebarWidth),
-      height: Math.max(400, bounds.height - 48)
-    });
-  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
