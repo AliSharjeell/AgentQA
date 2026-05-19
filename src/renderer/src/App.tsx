@@ -350,59 +350,55 @@ interface TaskItemProps {
 }
 
 function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, onDelete }: TaskItemProps): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
   const isRunning = task.status === "running";
   const isPaused = task.status === "paused";
 
   return (
-    <div className="group flex flex-col rounded-lg overflow-hidden transition-all duration-200">
-      <div
-        className={`flex cursor-pointer items-center gap-2.5 px-3 py-2 transition rounded-lg ${
-          active
-            ? "bg-white/8 text-white font-medium"
-            : "text-zinc-400 hover:bg-white/4 hover:text-zinc-200"
-        }`}
-        onClick={onClick}
-      >
+    <div
+      className={`flex flex-col cursor-pointer transition-all duration-200 rounded-xl border select-none ${
+        active
+          ? "bg-white/8 border-white/10 text-white"
+          : "border-transparent text-zinc-400 hover:bg-white/4 hover:border-white/5 hover:text-zinc-200"
+      }`}
+      onClick={onClick}
+    >
+      <div className="flex items-center gap-2.5 px-3 py-2">
         <StatusIcon status={task.status} size={14} />
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs">{task.name}</p>
+          <p className="truncate text-xs font-medium">{task.name}</p>
           <p className={`truncate text-[10px] ${active ? "text-zinc-300" : "text-zinc-500"}`}>{task.targetUrl}</p>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
           {task.status === "todo" && (
-            <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10" onClick={(e) => { e.stopPropagation(); onStart(); }} title="Start">
+            <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStart(); }} title="Start">
               <Play size={11} />
             </button>
           )}
           {isRunning && (
             <>
-              <button className="grid h-6 w-6 place-items-center rounded text-yellow-400 hover:bg-white/10" onClick={(e) => { e.stopPropagation(); onPause(); }} title="Pause">
+              <button className="grid h-6 w-6 place-items-center rounded text-yellow-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onPause(); }} title="Pause">
                 <Pause size={11} />
               </button>
-              <button className="grid h-6 w-6 place-items-center rounded text-red-400 hover:bg-white/10" onClick={(e) => { e.stopPropagation(); onStop(); }} title="Stop">
+              <button className="grid h-6 w-6 place-items-center rounded text-red-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStop(); }} title="Stop">
                 <Square size={11} />
               </button>
             </>
           )}
           {isPaused && (
-            <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10" onClick={(e) => { e.stopPropagation(); onResume(); }} title="Resume">
+            <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onResume(); }} title="Resume">
               <Play size={11} />
             </button>
           )}
-          <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
+          <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
             <Trash2 size={11} />
-          </button>
-          <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-white/10" onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}>
-            {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
           </button>
         </div>
       </div>
 
-      {expanded && (
-        <div className="pl-6 pr-2.5 py-2 space-y-2 text-zinc-400 text-xs">
+      {active && (
+        <div className="border-t border-white/5 pl-8 pr-3 py-2.5 space-y-2.5 text-zinc-400 text-xs">
           {task.steps.length > 0 && (
             <div className="space-y-1">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Steps</p>
@@ -420,7 +416,7 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
           {task.aiPlan && (
             <div>
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">AI Plan</p>
-              <p className="text-xs text-zinc-400">{task.aiPlan}</p>
+              <p className="text-xs text-zinc-400 leading-relaxed">{task.aiPlan}</p>
             </div>
           )}
         </div>
