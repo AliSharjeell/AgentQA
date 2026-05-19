@@ -358,7 +358,7 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
       className={`window-no-drag flex flex-col cursor-pointer transition-all duration-200 rounded-xl border select-none ${
         active
           ? "bg-white/8 border-white/10 text-white"
-          : "border-transparent text-zinc-400 hover:bg-white/4 hover:border-white/5 hover:text-zinc-200"
+          : "border-transparent text-zinc-400 hover:bg-white/5 hover:border-white/5 hover:text-zinc-200 active:scale-[0.98]"
       }`}
       onClick={onClick}
     >
