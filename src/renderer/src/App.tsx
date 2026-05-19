@@ -276,7 +276,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
   }, [inputName, browserUrl, onSelectTask, onRefresh, setTasks]);
 
   return (
-    <div className="mt-4 flex flex-1 flex-col overflow-hidden">
+    <div className="window-no-drag mt-4 flex flex-1 flex-col overflow-hidden">
       {/* Task list */}
       <div className="flex-1 space-y-1.5 overflow-y-auto pr-1">
         {tasks.length === 0 ? (
@@ -355,7 +355,7 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
 
   return (
     <div
-      className={`flex flex-col cursor-pointer transition-all duration-200 rounded-xl border select-none ${
+      className={`window-no-drag flex flex-col cursor-pointer transition-all duration-200 rounded-xl border select-none ${
         active
           ? "bg-white/8 border-white/10 text-white"
           : "border-transparent text-zinc-400 hover:bg-white/4 hover:border-white/5 hover:text-zinc-200"
@@ -611,7 +611,7 @@ function SettingsPanel(): JSX.Element {
   }, [settings]);
 
   return (
-    <div className="mt-4 flex-1 space-y-4 overflow-y-auto">
+    <div className="window-no-drag mt-4 flex-1 space-y-4 overflow-y-auto">
       <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider select-none">Settings</p>
 
       <div className="space-y-3">
