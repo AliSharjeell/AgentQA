@@ -80,7 +80,6 @@ async function runQaTaskWithAgentAsync(task: QaTask, settings: AppSettings): Pro
     status: TaskStepStatus;
     timestamp: string;
     result?: string;
-    screenshotPath?: string;
     error?: string;
   }[] = [];
 
@@ -98,17 +97,13 @@ async function runQaTaskWithAgentAsync(task: QaTask, settings: AppSettings): Pro
       model: settings.model || undefined
     });
 
-    // Connect to the existing Electron WebContentsView browser via CDP
-    // The WebView runs with remote debugging on port 9222 (passed via CLI flag)
-    const browser = await playwright.chromium.connectOverCDP("http://localhost:9222");
-    const cdpSessions = browser.contexts();
-    const ctx = cdpSessions[0] ?? await browser.newContext();
-    const pages = ctx.pages();
-    const page = pages[0];
-
-    if (!page) {
-      throw new Error("No page found in CDP session. Make sure the browser preview is loaded.");
-    }
+    // Launch a headed browser so the user can watch the AI agent work
+    const browser = await playwright.chromium.launch({ headless: false });
+    const context = await browser.newContext({
+      acceptDownloads: true,
+      viewport: { width: 1280, height: 800 }
+    });
+    const page = await context.newPage();
 
     // Navigate to target URL
     emitProgress({ type: "task_progress", taskId: task.id, message: `Navigating to ${task.targetUrl}...` });
@@ -201,7 +196,6 @@ async function runQaTaskWithAgentAsync(task: QaTask, settings: AppSettings): Pro
         instruction: s.instruction,
         status: s.status,
         result: s.result ?? "",
-        screenshotPath: s.screenshotPath,
         duration: 0,
         error: s.error
       })),
@@ -605,10 +599,6 @@ function generateMarkdownReport(report: QaReport): string {
 }
 
 // ─── App Lifecycle ─────────────────────────────────────────────────────────
-
-// Enable remote debugging so Playwright can connect via CDP
-app.commandLine.appendSwitch("remote-debugging-port", "9222");
-app.commandLine.appendSwitch("remote-debugging-address", "localhost");
 
 app.whenReady().then(() => {
   app.setAppUserModelId("com.qa-automation-ai.app");
