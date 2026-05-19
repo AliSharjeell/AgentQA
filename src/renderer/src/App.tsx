@@ -404,21 +404,23 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
         >
           {/* Natural language response block at the top */}
           {task.status === "running" && (
-            <div className="rounded-lg bg-blue-500/5 border border-blue-500/15 px-3 py-2 text-zinc-300 animate-pulse flex items-center gap-2 select-none">
-              <Loader2 size={12} className="animate-spin text-indigo-400 shrink-0" />
-              <p className="text-[11px] font-medium">Executing browser automation...</p>
+            <div className="flex items-center gap-2 py-0.5 select-none pl-1">
+              <Loader2 size={11} className="animate-spin text-indigo-400 shrink-0" />
+              <p className="text-[11px] text-zinc-400">Executing browser automation...</p>
             </div>
           )}
           {task.status === "failed" && !task.report && (
-            <div className="rounded-lg bg-red-500/5 border border-red-500/20 px-3 py-2 text-red-400">
-              <p className="text-[11px] font-medium">
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Error</p>
+              <p className="text-[11px] text-red-400 leading-relaxed pl-1">
                 {task.steps.find((s) => s.status === "failed")?.error || "Task stopped due to an error."}
               </p>
             </div>
           )}
           {task.report?.summary && (
-            <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-zinc-200">
-              <p className="text-[11px] font-medium leading-relaxed">{task.report.summary}</p>
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Result</p>
+              <p className="text-[11px] text-zinc-300 leading-relaxed pl-1">{task.report.summary}</p>
             </div>
           )}
 
