@@ -181,7 +181,7 @@ import time
 
 target_url = ${JSON.stringify(task.targetUrl)}
 task_name = ${JSON.stringify(task.name)}
-is_repository_task = ${JSON.stringify(isRepositoryTask)}
+is_repository_task = ${isRepositoryTask ? "True" : "False"}
 
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
