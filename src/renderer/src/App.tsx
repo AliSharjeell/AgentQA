@@ -24,7 +24,9 @@ import {
   RefreshCw,
   ArrowLeft,
   ArrowRight,
-  Search
+  Search,
+  CheckSquare,
+  XSquare
 } from "lucide-react";
 import type {
   QaTask,
@@ -460,13 +462,13 @@ function StatusIcon({ status, size = 14 }: { status: QaTask["status"]; size?: nu
     status === "failed" ? "text-red-400" :
     status === "running" ? "text-blue-400" :
     status === "paused" ? "text-yellow-400" :
-    "text-zinc-600";
+    "text-zinc-500";
   const icon =
-    status === "done" ? <CheckCircle2 size={size} /> :
-    status === "failed" ? <XCircle size={size} /> :
+    status === "done" ? <CheckSquare size={size} /> :
+    status === "failed" ? <XSquare size={size} /> :
     status === "running" ? <Loader2 size={size} className="animate-spin" /> :
     status === "paused" ? <Pause size={size} /> :
-    <Circle size={size} />;
+    <Square size={size} />;
   return <span className={`shrink-0 ${color}`}>{icon}</span>;
 }
 
