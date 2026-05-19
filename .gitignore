@@ -10,3 +10,8 @@ lead-scrapper.sqlite
 lead-scrapper.sqlite-*
 lead-scrapper-store.json
 outreach-store.json
+
+# Local environment with real API keys (NEVER commit)
+.env
+.env.local
+.env.*.local
