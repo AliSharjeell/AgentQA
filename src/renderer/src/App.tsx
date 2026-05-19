@@ -121,7 +121,7 @@ export default function App(): JSX.Element {
     <main className="app-shell min-h-screen text-zinc-100">
       <div className="flex min-h-screen">
         {/* ── Sidebar ── */}
-        <aside className="mica-sidebar window-drag sticky top-0 flex h-screen w-80 shrink-0 flex-col overflow-hidden border-r border-white/8 bg-zinc-950/60 px-4 py-4">
+        <aside className="mica-sidebar window-drag sticky top-0 flex h-screen w-80 shrink-0 flex-col overflow-hidden border-r border-white/8 px-4 py-4">
           <div className="flex items-center gap-2.5">
             <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600">
               <Bot size={16} className="text-white" />
