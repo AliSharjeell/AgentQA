@@ -176,7 +176,88 @@ async function runBrowserHarnessAgent(
   settings: AppSettings,
   onStep: (event: HarnessStepEvent) => void
 ): Promise<HarnessCheckResult> {
-  const observation = await runBrowserHarnessScript(buildObservationBrowserHarnessScript(task), onStep);
+  // Native Electron implementation of the observation step for speed and efficiency
+  let observation: { ok: boolean; summary: string; error?: string } = {
+    ok: false,
+    summary: "DOM inspection failed."
+  };
+
+  try {
+    if (!browserView) {
+      throw new Error("Preview browser is not initialized.");
+    }
+    const view = browserView;
+
+    onStep({ instruction: `Open ${task.targetUrl}`, status: "running" });
+    await view.webContents.loadURL(task.targetUrl).catch(() => {});
+    
+    // Wait for page to finish loading
+    if (view.webContents.isLoading()) {
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          view.webContents.once('did-stop-loading', () => resolve());
+        }),
+        new Promise<void>((resolve) => setTimeout(resolve, 8000)) // 8s timeout fallback
+      ]);
+    }
+    
+    // Let page settle for a brief moment
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const url = view.webContents.getURL();
+    const title = view.webContents.getTitle();
+    
+    onStep({ instruction: `Open ${task.targetUrl}`, status: "done", result: `Loaded ${url}` });
+    onStep({ instruction: "Inspect DOM with browser-harness", status: "running" });
+
+    // Evaluate JavaScript in the browser view to scrape visible elements
+    const elements = await view.webContents.executeJavaScript(`(() => {
+      const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[role="button"],[role="link"],[tabindex]'));
+      const visibleNodes = nodes.filter(el => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+      });
+      return visibleNodes.slice(0, 500).map((el, index) => {
+        const rect = el.getBoundingClientRect();
+        const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || '').trim();
+        return {
+          index,
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute('role') || '',
+          text: text.slice(0, 140),
+          href: el.href || '',
+          name: el.getAttribute('name') || '',
+          id: el.id || '',
+          classes: String(el.className || '').slice(0, 120),
+          visible: true,
+          x: Math.round(rect.left + rect.width / 2),
+          y: Math.round(rect.top + rect.height / 2)
+        };
+      });
+    })()`).catch(() => []);
+
+    const observationData = {
+      taskUrl: task.targetUrl,
+      page: { url, title },
+      interactiveElements: elements
+    };
+
+    const observationSummary = JSON.stringify(observationData);
+    observation = {
+      ok: true,
+      summary: observationSummary
+    };
+    onStep({ instruction: "Inspect DOM with browser-harness", status: "done", result: observationSummary.slice(0, 3500) });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    observation = {
+      ok: false,
+      summary: "DOM inspection failed.",
+      error: msg
+    };
+    onStep({ instruction: "Inspect DOM with browser-harness", status: "failed", error: msg });
+  }
 
   if (!settings.apiKey) {
     return {
@@ -247,7 +328,12 @@ def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
 - Emit steps with {"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."}.
 - Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}. Ensure that "summary" is a natural-language, short 1-line explanation of the final outcome (e.g., "Successfully logged in and verified the settings tab is visible." or "Failed to complete checkout because the card input was disabled.").
-- Start by opening the target URL.
+
+Instructions for the Agent:
+- Start by opening the target URL, unless you are already on a logged-in dashboard/subpage that is closer to the task goal.
+- If the task is a conceptual check, diagnostic, or question (e.g., asking if a feature exists, checking version numbers, or answering conceptual questions), you can write a script that answers the question directly in the final summary event based on your DOM observations (setting ok=True) and finishes immediately without needing to perform extra browser actions.
+- Reuse existing logged-in sessions! If the browser state shows you are already logged in or have session state, do not trigger a fresh login sequence.
+- Actively Navigate! If the target elements (like a login or checkout button) are not on the landing page, look at the interactive elements list for navigation links (e.g. "Sign in", "Login", "Register", "Menu", "Sign Up"). Click one of them to navigate to the correct page first. Do not fail on the landing page if the controls aren't there.
 - Inspect DOM state with js(...) before acting.
 - Choose actions from observed DOM and page state. Do not assume this is GitHub-specific.
 - Use click_at_xy(...) for clicks and type_text(...) for typing.
@@ -419,8 +505,8 @@ function runBrowserHarnessScript(
   onStep: (event: HarnessStepEvent) => void
 ): Promise<HarnessCheckResult> {
   return new Promise((resolve) => {
-    const command = resolveBrowserHarnessCommand();
-    const child = spawn(command, [], {
+    const { executable, args } = resolveBrowserHarnessCommand();
+    const child = spawn(executable, args, {
       shell: false,
       env: {
         ...process.env,
@@ -464,32 +550,32 @@ function runBrowserHarnessScript(
           return;
         }
 
-        if (event.instruction && event.status) {
+        if (event.instruction) {
           onStep({
             instruction: event.instruction,
-            status: event.status,
+            status: event.status ?? "running",
             result: event.result,
             error: event.error
           });
         }
-      } catch {
-        // Ignore non-JSON harness output.
+      } catch (err) {
+        // ignore malformed lines
       }
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
-      stdout += text;
-      stdoutBuffer += text;
-      const lines = stdoutBuffer.split(/\r?\n/);
-      stdoutBuffer = lines.pop() ?? "";
-      for (const line of lines) {
+      stdout += chunk.toString();
+      stdoutBuffer += chunk.toString();
+      let idx;
+      while ((idx = stdoutBuffer.indexOf("\n")) !== -1) {
+        const line = stdoutBuffer.slice(0, idx).trim();
+        stdoutBuffer = stdoutBuffer.slice(idx + 1);
         handleLine(line);
       }
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
+      stderr += chunk.toString();
     });
 
     child.on("error", (error) => {
@@ -501,22 +587,18 @@ function runBrowserHarnessScript(
     });
 
     child.on("close", (code) => {
-      if (settled) return;
       if (stdoutBuffer.trim()) {
         handleLine(stdoutBuffer.trim());
       }
-
       if (finalResult) {
         finish(finalResult);
-        return;
+      } else {
+        finish({
+          ok: false,
+          summary: "Browser-harness exited prematurely.",
+          error: `Process exited with code ${code}.\nStderr: ${stderr}\nStdout: ${stdout}`
+        });
       }
-
-      const visibleOutput = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n").trim();
-      finish({
-        ok: false,
-        summary: "Browser-harness exited without a result.",
-        error: visibleOutput || `browser-harness exited with code ${code ?? "unknown"}`
-      });
     });
 
     child.stdin.write(script);
@@ -524,20 +606,32 @@ function runBrowserHarnessScript(
   });
 }
 
-function resolveBrowserHarnessCommand(): string {
+interface ResolvedCommand {
+  executable: string;
+  args: string[];
+}
+
+function resolveBrowserHarnessCommand(): ResolvedCommand {
   if (process.env.BROWSER_HARNESS_PATH && fs.existsSync(process.env.BROWSER_HARNESS_PATH)) {
-    return process.env.BROWSER_HARNESS_PATH;
+    return { executable: process.env.BROWSER_HARNESS_PATH, args: [] };
   }
 
   const userProfile = process.env.USERPROFILE;
   if (userProfile) {
+    // 1. Try AppData Roaming uv tools python.exe for instant execution bypass (saves wrapper startup lag)
+    const pythonExePath = path.join(userProfile, "AppData", "Roaming", "uv", "tools", "browser-harness", "Scripts", "python.exe");
+    if (fs.existsSync(pythonExePath)) {
+      return { executable: pythonExePath, args: ["-m", "browser_harness.run"] };
+    }
+
+    // 2. Try standard local bin path
     const uvToolPath = path.join(userProfile, ".local", "bin", "browser-harness.exe");
     if (fs.existsSync(uvToolPath)) {
-      return uvToolPath;
+      return { executable: uvToolPath, args: [] };
     }
   }
 
-  return "browser-harness";
+  return { executable: "browser-harness", args: [] };
 }
 
 async function getPreviewAutomationTarget(
