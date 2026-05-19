@@ -597,7 +597,7 @@ async function runQaTask(taskId: string): Promise<void> {
 }
 
 function isToolUseResponseError(message: string): boolean {
-  return /expected tool use in response|model returned empty action/i.test(message);
+  return /expected tool use in response|model returned empty action|no next action returned|success=false/i.test(message);
 }
 
 // ─── Progress Emitter ─────────────────────────────────────────────────────
