@@ -142,21 +142,21 @@ export default function App(): JSX.Element {
           {/* Browser toolbar strip */}
           <div className="window-no-drag fixed left-72 right-0 top-0 z-10 flex h-12 items-center gap-1 border-b border-white/8 bg-zinc-900/80 px-4 backdrop-blur-sm">
             <button
-              className="icon-button h-9 w-9"
+              className="browser-nav-btn"
               onClick={() => window.qaApi?.goBack()}
               title="Back"
             >
               <ArrowLeft size={14} />
             </button>
             <button
-              className="icon-button h-9 w-9"
+              className="browser-nav-btn"
               onClick={() => window.qaApi?.goForward()}
               title="Forward"
             >
               <ArrowRight size={14} />
             </button>
             <button
-              className="icon-button h-9 w-9"
+              className="browser-nav-btn"
               onClick={() => window.qaApi?.refreshBrowser()}
               title="Refresh"
             >
