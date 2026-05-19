@@ -416,6 +416,7 @@ Agent Instructions:
 - Use click_at_xy() only for buttons/links. Always extract int x,y from js() result dict.
 - After submitting forms, wait_for_load() + time.sleep(1) + verify with page_info().
 - Never report a bug unless verified twice after waiting and scrolling.
+- If no bugs are found after thorough testing, say "No confirmed bugs found" in the summary. Do NOT invent or speculate about issues that were not actually observed.
 - If URL becomes chrome-error://chromewebdata, report as infrastructure failure, not website bug.
 - Wrap everything in try/except.
 
