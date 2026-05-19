@@ -100,17 +100,8 @@ export default function App(): JSX.Element {
       <div className="flex min-h-screen">
         {/* ── Sidebar ── */}
         <aside className="mica-sidebar window-drag sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden border-r border-white/8 px-4 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600">
-              <Bot size={16} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-sm text-white leading-tight">QA Automation AI</h1>
-              <div className="flex items-center gap-1.5">
-                <span className={`inline-block h-1.5 w-1.5 rounded-full ${browserState.ready ? "bg-green-400" : "bg-zinc-600"}`} />
-                <span className="text-[10px] text-zinc-500">{browserState.ready ? browserState.title || "Ready" : browserState.message}</span>
-              </div>
-            </div>
+          <div className="flex items-center py-1.5">
+            <h1 className="text-sm font-semibold text-white tracking-wide">QA Automation AI</h1>
           </div>
 
           {page === "settings" ? (
