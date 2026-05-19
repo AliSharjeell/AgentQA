@@ -68,193 +68,7 @@ const PREVIEW_DEBUG_PORT = 9223;
 
 // ─── Browser-Use Agent ───────────────────────────────────────────────────────
 
-type AgentRunResult = { ok: true } | { ok: false; error: string };
-
-async function runQaTaskWithAgentAsync(task: QaTask, settings: AppSettings): Promise<AgentRunResult> {
-  let preview: Awaited<ReturnType<typeof getPreviewAutomationTarget>> | null = null;
-  const steps: {
-    id: string;
-    order: number;
-    instruction: string;
-    status: TaskStepStatus;
-    timestamp: string;
-    result?: string;
-    error?: string;
-  }[] = [];
-
-  let stepCount = 0;
-
-  try {
-    const { Agent } = await import("browser-use");
-    const playwright = await import("playwright");
-
-    // Build browser-use LLM from settings
-    const LlmClass = settings.apiProvider === "openai"
-      ? (await import("browser-use/llm/openai")).ChatOpenAI
-      : (await import("browser-use/llm/anthropic")).ChatAnthropic;
-
-    const buLlm = new LlmClass({
-      apiKey: settings.apiKey,
-      ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {}),
-      model: settings.model || undefined
-    });
-
-    preview = await getPreviewAutomationTarget(playwright, task.targetUrl);
-    const page = preview.page;
-
-    // Navigate the embedded preview to the task URL before handing it to browser-use.
-    emitProgress({ type: "task_progress", taskId: task.id, message: `Navigating to ${task.targetUrl}...` });
-    await page.goto(task.targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-
-    // Set initial step
-    steps.push({
-      id: generateId(),
-      order: 1,
-      instruction: `Navigate to ${task.targetUrl}`,
-      status: "done",
-      timestamp: new Date().toISOString(),
-      result: `Loaded ${task.targetUrl}`
-    });
-    stepCount = 1;
-    setTaskSteps(task.id, [...steps]);
-    emitProgress({ type: "task_progress", taskId: task.id, message: `Navigated to ${task.targetUrl}. Starting AI agent...` });
-
-    // Create agent using the connected page
-    const agent = new Agent({
-      task: task.name,
-      llm: buLlm,
-      page,
-      browser_context: preview.context,
-      max_failures: 3,
-      use_thinking: true,
-      use_judge: false,
-      enable_planning: true,
-      session_attachment_mode: "shared",
-      step_timeout: 120,
-      directly_open_url: false,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      register_new_step_callback: (_summary: any, output: any) => {
-        stepCount += 1;
-        const stepId = generateId();
-        const stepName =
-          output?.current_state?.next_goal ??
-          output?.current_state?.evaluation_previous_goal ??
-          `Browser-use step ${stepCount}`;
-        steps.push({
-          id: stepId,
-          order: stepCount,
-          instruction: stepName,
-          status: "running",
-          timestamp: new Date().toISOString()
-        });
-        setTaskSteps(task.id, [...steps]);
-        emitProgress({ type: "step_complete", taskId: task.id, stepId, message: stepName });
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      register_done_callback: (history: any) => {
-        const lastStep = steps[steps.length - 1];
-        const resultText = (history?.result as any[])?.map((r: { text_content?: string }) => r.text_content ?? "").join(" ") ?? "Task completed";
-        if (lastStep && lastStep.status === "running") {
-          lastStep.status = "done";
-          lastStep.result = resultText.slice(0, 300);
-          lastStep.timestamp = new Date().toISOString();
-        }
-        setTaskSteps(task.id, [...steps]);
-      },
-      register_should_stop_callback: () => Promise.resolve(stopTaskFlag)
-    });
-
-    emitProgress({ type: "task_progress", taskId: task.id, message: "AI agent is analyzing the page..." });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const history = await (agent as any).run();
-    const isSuccessful = typeof history?.is_successful === "function" ? history.is_successful() : true;
-    const finalText = typeof history?.final_result === "function" ? history.final_result() : "";
-
-    if (isSuccessful === false) {
-      const lastStep = steps[steps.length - 1];
-      if (lastStep) {
-        lastStep.status = "failed";
-        lastStep.error = finalText || "browser-use completed with success=false.";
-        lastStep.timestamp = new Date().toISOString();
-      }
-      setTaskSteps(task.id, [...steps]);
-      return { ok: false, error: finalText || "browser-use completed with success=false." };
-    }
-
-    // Finalize any running steps
-    for (const step of steps) {
-      if (step.status === "running") {
-        step.status = "done";
-        step.timestamp = new Date().toISOString();
-      }
-    }
-    setTaskSteps(task.id, [...steps]);
-
-    const endTime = new Date().toISOString();
-    const passed = steps.filter((s) => s.status === "done").length;
-    const failed = steps.filter((s) => s.status === "failed").length;
-
-    const report: QaReport = {
-      taskId: task.id,
-      taskName: task.name,
-      targetUrl: task.targetUrl,
-      overallStatus: failed === 0 ? "pass" : passed === 0 ? "fail" : "partial",
-      summary: `AI agent completed ${passed}/${steps.length} steps. ${failed} step(s) failed.`,
-      totalSteps: steps.length,
-      passedSteps: passed,
-      failedSteps: failed,
-      skippedSteps: 0,
-      startTime: task.createdAt,
-      endTime,
-      durationMs: new Date(endTime).getTime() - new Date(task.createdAt).getTime(),
-      steps: steps.map((s) => ({
-        instruction: s.instruction,
-        status: s.status,
-        result: s.result ?? "",
-        duration: 0,
-        error: s.error
-      })),
-      screenshots: [],
-      aiReasoning: "Executed by browser-use AI agent."
-    };
-
-    attachReport(task.id, report);
-    updateTask(task.id, { status: failed === 0 ? "done" : "paused" });
-    emitProgress({ type: "task_complete", taskId: task.id, data: report });
-    return { ok: true };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    emitProgress({ type: "task_failed", taskId: task.id, message });
-    updateTask(task.id, { status: "failed" });
-    if (steps.length === 0) {
-      steps.push({
-        id: generateId(),
-        order: 1,
-        instruction: "Start browser-use agent in preview browser",
-        status: "failed",
-        error: message,
-        timestamp: new Date().toISOString()
-      });
-    }
-    for (const step of steps) {
-      if (step.status === "running") {
-        step.status = "failed";
-        step.error = message;
-        step.timestamp = new Date().toISOString();
-      }
-    }
-    setTaskSteps(task.id, [...steps]);
-    return { ok: false, error: message };
-  } finally {
-    preview?.disconnect();
-  }
-}
-
-async function runDirectBrowserCheck(task: QaTask): Promise<boolean> {
-  if (!/repositor(?:y|ies)|repo\s+tab|tab\s+works/i.test(task.name)) {
-    return false;
-  }
-
+async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
   const steps: QaTask["steps"] = [];
   const startTime = new Date().toISOString();
 
@@ -272,8 +86,8 @@ async function runDirectBrowserCheck(task: QaTask): Promise<boolean> {
   };
 
   try {
-    emitProgress({ type: "task_progress", taskId: task.id, message: "Running browser-harness check in preview..." });
-    const harnessResult = await runBrowserHarnessRepositoryCheck(task.targetUrl, (event) => {
+    emitProgress({ type: "task_progress", taskId: task.id, message: "Running browser-harness in preview..." });
+    const harnessResult = await runBrowserHarnessScript(task, (event) => {
       if (event.status === "running") {
         addStep(event.instruction, "running");
         return;
@@ -356,15 +170,18 @@ type HarnessCheckResult = {
   error?: string;
 };
 
-function runBrowserHarnessRepositoryCheck(
-  targetUrl: string,
+function runBrowserHarnessScript(
+  task: QaTask,
   onStep: (event: HarnessStepEvent) => void
 ): Promise<HarnessCheckResult> {
+  const isRepositoryTask = isBrowserHarnessRepositoryTask(task);
   const script = `
 import json
 import time
 
-target_url = ${JSON.stringify(targetUrl)}
+target_url = ${JSON.stringify(task.targetUrl)}
+task_name = ${JSON.stringify(task.name)}
+is_repository_task = ${JSON.stringify(isRepositoryTask)}
 
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
@@ -415,26 +232,39 @@ try:
     info = page_info()
     emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
 
-    emit({"instruction": "Click the Repositories tab", "status": "running"})
-    rect = find_repo_tab_rect()
-    if not rect:
-        raise Exception("Could not find the Repositories tab in the preview browser.")
-    click_at_xy(rect["x"], rect["y"])
-    wait_for_load()
-    time.sleep(1)
-    state = repository_state()
-    if not state.get("ok"):
-        raise Exception("Repositories tab did not become active. Current URL: " + state.get("url", "unknown"))
-    emit({
-        "instruction": "Click the Repositories tab",
-        "status": "done",
-        "result": "Repositories view is active at " + state.get("url", "unknown")
-    })
-    emit({
-        "final": True,
-        "ok": True,
-        "summary": "The Repositories tab opened successfully in the live preview browser."
-    })
+    if is_repository_task:
+        emit({"instruction": "Click the Repositories tab", "status": "running"})
+        rect = find_repo_tab_rect()
+        if not rect:
+            raise Exception("Could not find the Repositories tab in the preview browser.")
+        click_at_xy(rect["x"], rect["y"])
+        wait_for_load()
+        time.sleep(1)
+        state = repository_state()
+        if not state.get("ok"):
+            raise Exception("Repositories tab did not become active. Current URL: " + state.get("url", "unknown"))
+        emit({
+            "instruction": "Click the Repositories tab",
+            "status": "done",
+            "result": "Repositories view is active at " + state.get("url", "unknown")
+        })
+        emit({
+            "final": True,
+            "ok": True,
+            "summary": "The Repositories tab opened successfully in the live preview browser."
+        })
+    else:
+        info = page_info()
+        emit({
+            "instruction": "Inspect page state with browser-harness",
+            "status": "done",
+            "result": "Active page: " + info.get("title", "") + " (" + info.get("url", target_url) + ")"
+        })
+        emit({
+            "final": True,
+            "ok": True,
+            "summary": "Browser-harness opened the target in the live preview browser. No task-specific harness routine exists yet for: " + task_name
+        })
 except Exception as exc:
     emit({
         "instruction": "Run browser-harness repository check",
@@ -744,34 +574,8 @@ async function runQaTask(taskId: string): Promise<void> {
   try {
     updateTask(taskId, { status: "running" });
 
-    if (isBrowserHarnessTask(task) && await runDirectBrowserCheck(task)) {
+    if (await runBrowserHarnessTask(task)) {
       return;
-    }
-
-    const settings = loadSettings();
-    if (!settings.apiKey) {
-      if (await runDirectBrowserCheck(task)) {
-        return;
-      }
-
-      emitProgress({
-        type: "task_failed",
-        taskId,
-        message: "No API key configured. Add one in Settings, or use a task this app can run with direct browser automation."
-      });
-      updateTask(taskId, { status: "failed" });
-      return;
-    }
-
-    emitProgress({ type: "task_progress", taskId, message: "Starting QA task with AI agent..." });
-
-    const agentResult = await runQaTaskWithAgentAsync(task, settings);
-    if (!agentResult.ok && isToolUseResponseError(agentResult.error) && await runDirectBrowserCheck(task)) {
-      return;
-    }
-    if (!agentResult.ok) {
-      emitProgress({ type: "task_failed", taskId, message: agentResult.error });
-      updateTask(taskId, { status: "failed" });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -784,7 +588,7 @@ async function runQaTask(taskId: string): Promise<void> {
   }
 }
 
-function isBrowserHarnessTask(task: QaTask): boolean {
+function isBrowserHarnessRepositoryTask(task: QaTask): boolean {
   return /repositor(?:y|ies)|repo\s+tab|tab\s+works/i.test(task.name);
 }
 
