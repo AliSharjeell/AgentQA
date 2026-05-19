@@ -65,23 +65,13 @@ import {
 
 // ─── Browser-Use Agent ───────────────────────────────────────────────────────
 
-async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<void> {
+function runQaTaskWithAgent(task: QaTask, settings: AppSettings): void {
+  void runQaTaskWithAgentAsync(task, settings);
+}
+
+async function runQaTaskWithAgentAsync(task: QaTask, settings: AppSettings): Promise<void> {
   const { Agent } = await import("browser-use");
   const playwright = await import("playwright");
-
-  // Build browser-use LLM from settings
-  const LlmClass = settings.apiProvider === "openai"
-    ? (await import("browser-use/llm/openai")).ChatOpenAI
-    : (await import("browser-use/llm/anthropic")).ChatAnthropic;
-
-  const buLlm = new LlmClass({
-    apiKey: settings.apiKey,
-    ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {}),
-    model: settings.model || undefined
-  });
-
-  const screenshotDir = path.join(app.getPath("userData"), "screenshots");
-  fs.mkdirSync(screenshotDir, { recursive: true });
 
   const steps: {
     id: string;
@@ -95,17 +85,49 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
   }[] = [];
 
   let stepCount = 0;
-  let browser: import("playwright").Browser | null = null;
 
   try {
-    browser = await playwright.chromium.launch({ headless: false });
-    const context = await browser.newContext({
-      acceptDownloads: true,
-      viewport: { width: 1280, height: 800 }
-    });
-    const page = await context.newPage();
+    // Build browser-use LLM from settings
+    const LlmClass = settings.apiProvider === "openai"
+      ? (await import("browser-use/llm/openai")).ChatOpenAI
+      : (await import("browser-use/llm/anthropic")).ChatAnthropic;
 
-    // Create agent
+    const buLlm = new LlmClass({
+      apiKey: settings.apiKey,
+      ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {}),
+      model: settings.model || undefined
+    });
+
+    // Connect to the existing Electron WebContentsView browser via CDP
+    // The WebView runs with remote debugging on port 9222 (passed via CLI flag)
+    const browser = await playwright.chromium.connectOverCDP("http://localhost:9222");
+    const cdpSessions = browser.contexts();
+    const ctx = cdpSessions[0] ?? await browser.newContext();
+    const pages = ctx.pages();
+    const page = pages[0];
+
+    if (!page) {
+      throw new Error("No page found in CDP session. Make sure the browser preview is loaded.");
+    }
+
+    // Navigate to target URL
+    emitProgress({ type: "task_progress", taskId: task.id, message: `Navigating to ${task.targetUrl}...` });
+    await page.goto(task.targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+
+    // Set initial step
+    steps.push({
+      id: generateId(),
+      order: 1,
+      instruction: `Navigate to ${task.targetUrl}`,
+      status: "done",
+      timestamp: new Date().toISOString(),
+      result: `Loaded ${task.targetUrl}`
+    });
+    stepCount = 1;
+    setTaskSteps(task.id, [...steps]);
+    emitProgress({ type: "task_progress", taskId: task.id, message: `Navigated to ${task.targetUrl}. Starting AI agent...` });
+
+    // Create agent using the connected page
     const agent = new Agent({
       task: task.name,
       llm: buLlm,
@@ -115,56 +137,35 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
       use_judge: false,
       enable_planning: true,
       step_timeout: 120,
-      directly_open_url: true,
+      directly_open_url: false,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       register_new_step_callback: (state: any) => {
         stepCount += 1;
         const stepId = generateId();
         const stepName = state?.step_info?.step_name ?? `Step ${stepCount}`;
-        const step: typeof steps[number] = {
+        steps.push({
           id: stepId,
           order: stepCount,
           instruction: stepName,
           status: "running",
           timestamp: new Date().toISOString()
-        };
-        steps.push(step);
+        });
         setTaskSteps(task.id, [...steps]);
         emitProgress({ type: "step_complete", taskId: task.id, stepId, message: stepName });
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       register_done_callback: (history: any) => {
         const lastStep = steps[steps.length - 1];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const resultText = (history?.result as any[])?.map((r) => r.text_content ?? "").join(" ") ?? "Task completed";
+        const resultText = (history?.result as any[])?.map((r: { text_content?: string }) => r.text_content ?? "").join(" ") ?? "Task completed";
         if (lastStep && lastStep.status === "running") {
           lastStep.status = "done";
-          lastStep.result = resultText.slice(0, 200);
+          lastStep.result = resultText.slice(0, 300);
           lastStep.timestamp = new Date().toISOString();
         }
-        void capturePageScreenshot(page, screenshotDir).then((sp) => {
-          if (sp && lastStep) lastStep.screenshotPath = sp;
-          setTaskSteps(task.id, [...steps]);
-        });
+        setTaskSteps(task.id, [...steps]);
       },
       register_should_stop_callback: () => Promise.resolve(stopTaskFlag)
     });
-
-    // Navigate to target URL before running agent
-    await page.goto(task.targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-    emitProgress({ type: "task_progress", taskId: task.id, message: `Navigated to ${task.targetUrl}. Starting AI agent...` });
-
-    // Set initial step
-    steps.push({
-      id: generateId(),
-      order: 1,
-      instruction: `Navigate to ${task.targetUrl} and ${task.name}`,
-      status: "done",
-      timestamp: new Date().toISOString(),
-      result: `Loaded ${task.targetUrl}`
-    });
-    stepCount = 1;
-    setTaskSteps(task.id, [...steps]);
 
     emitProgress({ type: "task_progress", taskId: task.id, message: "AI agent is analyzing the page..." });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -204,7 +205,7 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
         duration: 0,
         error: s.error
       })),
-      screenshots: steps.flatMap((s) => (s.screenshotPath ? [s.screenshotPath] : [])),
+      screenshots: [],
       aiReasoning: "Executed by browser-use AI agent."
     };
 
@@ -225,9 +226,6 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
       }
     }
     setTaskSteps(task.id, [...steps]);
-    if (browser) {
-      try { await browser.close(); } catch { /* ignore */ }
-    }
   }
 }
 
@@ -607,6 +605,10 @@ function generateMarkdownReport(report: QaReport): string {
 }
 
 // ─── App Lifecycle ─────────────────────────────────────────────────────────
+
+// Enable remote debugging so Playwright can connect via CDP
+app.commandLine.appendSwitch("remote-debugging-port", "9222");
+app.commandLine.appendSwitch("remote-debugging-address", "localhost");
 
 app.whenReady().then(() => {
   app.setAppUserModelId("com.qa-automation-ai.app");

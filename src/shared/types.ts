@@ -130,6 +130,7 @@ export interface AppProgressEvent {
   stepId?: string;
   data?: unknown;
   message?: string;
+  aiThought?: string;
 }
 
 // ─── CSV Export ─────────────────────────────────────────────────────────────
