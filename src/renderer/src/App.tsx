@@ -457,19 +457,45 @@ function StepRow({ step }: { step: QaTask["steps"][number] }): JSX.Element {
 // ─── Status Icon ────────────────────────────────────────────────────────────
 
 function StatusIcon({ status, size = 14 }: { status: QaTask["status"]; size?: number }): JSX.Element {
-  const color =
-    status === "done" ? "text-green-400" :
-    status === "failed" ? "text-red-400" :
-    status === "running" ? "text-blue-400" :
-    status === "paused" ? "text-yellow-400" :
-    "text-zinc-500";
-  const icon =
-    status === "done" ? <CheckSquare size={size} /> :
-    status === "failed" ? <XSquare size={size} /> :
-    status === "running" ? <Loader2 size={size} className="animate-spin" /> :
-    status === "paused" ? <Pause size={size} /> :
-    <Square size={size} />;
-  return <span className={`shrink-0 ${color}`}>{icon}</span>;
+  if (status === "running") {
+    return <Loader2 size={size} className="animate-spin text-blue-400 shrink-0" />;
+  }
+
+  if (status === "done") {
+    return (
+      <div className="w-3.5 h-3.5 rounded-[4px] bg-green-500 flex items-center justify-center text-zinc-950 shrink-0 select-none">
+        <svg className="w-2.5 h-2.5 stroke-[3.5] stroke-current" fill="none" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (status === "failed") {
+    return (
+      <div className="w-3.5 h-3.5 rounded-[4px] bg-red-500 flex items-center justify-center text-zinc-950 shrink-0 select-none">
+        <svg className="w-2 h-2 stroke-[3.5] stroke-current" fill="none" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (status === "paused") {
+    return (
+      <div className="w-3.5 h-3.5 rounded-[4px] bg-yellow-500 flex items-center justify-center text-zinc-950 shrink-0 select-none">
+        <svg className="w-1.5 h-1.5 fill-current" viewBox="0 0 24 24">
+          <rect x="4" y="4" width="5" height="16" rx="1" />
+          <rect x="15" y="4" width="5" height="16" rx="1" />
+        </svg>
+      </div>
+    );
+  }
+
+  // Todo state
+  return (
+    <div className="w-3.5 h-3.5 rounded-[4px] border border-white/20 bg-white/5 shrink-0 transition-colors" />
+  );
 }
 
 // ─── Report Badge ──────────────────────────────────────────────────────────
