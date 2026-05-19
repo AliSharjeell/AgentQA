@@ -85,11 +85,11 @@ textarea {
   }
 
   .browser-nav-btn {
-    @apply grid h-8 w-8 place-items-center rounded-full text-zinc-400 hover:text-zinc-100 bg-transparent hover:bg-white/10 transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none;
+    @apply grid h-7 w-7 place-items-center rounded-full text-zinc-400 hover:text-zinc-100 bg-transparent hover:bg-white/10 transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none;
   }
 
   .browser-url-input {
-    @apply h-8 w-full rounded-full border border-white/5 bg-white/10 px-8 text-xs text-zinc-200 placeholder:text-zinc-500 text-center outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/15 focus:text-left;
+    @apply h-7 w-full rounded-full border border-white/5 bg-white/10 px-8 text-xs text-zinc-200 placeholder:text-zinc-500 text-center outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/15 focus:text-left;
   }
 
   .surface {
