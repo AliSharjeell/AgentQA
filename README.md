@@ -228,6 +228,19 @@ The AI agent follows these rules when testing:
 
 ---
 
+## AI Agent Skill (for Claude Code, Cline, etc.)
+
+We provide a built-in skill so that AI coding assistants can learn how to use the `agentqa` CLI directly within your codebase. This allows agents to autonomously verify their own code changes!
+
+To install the skill for your agent (e.g., in Claude Code):
+```bash
+claude install file://skills/agentqa-cli
+```
+
+*(This will teach the agent how to run `agentqa` and how to interpret the JSON output).*
+
+---
+
 ## Troubleshooting
 
 ### "Browser-harness could not be started"
