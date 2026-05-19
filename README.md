@@ -1,4 +1,4 @@
-# QA Automation AI
+# AgentQA
 
 AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a **desktop app** with live browser preview and as a **headless CLI** for coding agents.
 
@@ -6,7 +6,7 @@ AI-powered QA testing tool that explores websites, fills forms, clicks buttons, 
 
 ## Two Interfaces, One Engine
 
-| | Desktop App | CLI (`qa-cli`) |
+| | Desktop App | CLI (`agentqa`) |
 |---|---|---|
 | **For** | Manual QA, demos, debugging | Coding agents, CI/CD pipelines |
 | **Browser** | Embedded BrowserView (visible) | Headless Chrome (via browser-harness) |
@@ -58,7 +58,7 @@ node out/cli/index.js run \
 ## CLI Usage
 
 ```
-qa-cli run --url <URL> --prompt <PROMPT> [options]
+agentqa run --url <URL> --prompt <PROMPT> [options]
 
 Options:
   --url        Target URL to test (required)
@@ -192,7 +192,7 @@ npm run start        # Preview production build
 
 ## Configuration
 
-Settings are stored in `%APPDATA%/qa-automation-ai/settings.json` (shared between desktop and CLI):
+Settings are stored in `%APPDATA%/agentqa/settings.json` (shared between desktop and CLI):
 
 ```json
 {
@@ -203,7 +203,16 @@ Settings are stored in `%APPDATA%/qa-automation-ai/settings.json` (shared betwee
 }
 ```
 
-The CLI also accepts settings via command-line flags and the `$QA_API_KEY` environment variable.
+The CLI also accepts settings via command-line flags and environment variables. You can create a `.env` file or export them directly in your shell:
+
+```bash
+QA_API_PROVIDER=anthropic
+QA_API_KEY=sk-ant-xxx
+QA_API_MODEL=claude-3-5-sonnet-20241022
+QA_API_URL=https://api.anthropic.com
+```
+
+*Note: In Node.js 20+, you can load a `.env` file natively using `node --env-file=.env out/cli/index.js run ...`*
 
 ---
 

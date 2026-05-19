@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * qa-cli — Headless QA automation tool for coding agents.
+ * agentqa — Headless QA automation tool for coding agents.
  *
  * Runs QA tasks against any URL using browser-harness (headless Chrome)
  * and an LLM (OpenAI/Anthropic) to generate and execute test scripts.
  *
  * Usage:
- *   qa-cli run --url <URL> --prompt <PROMPT> [options]
+ *   agentqa run --url <URL> --prompt <PROMPT> [options]
  *
  * Options:
  *   --url        Target URL (required)
@@ -64,10 +64,10 @@ async function main(): Promise<void> {
 
   if (!command || command === "help" || command === "--help") {
     log(`
-qa-cli — Headless QA automation for coding agents
+agentqa — Headless QA automation for coding agents
 
 USAGE:
-  qa-cli run --url <URL> --prompt <PROMPT> [options]
+  agentqa run --url <URL> --prompt <PROMPT> [options]
 
 OPTIONS:
   --url        Target URL to test (required)
@@ -86,7 +86,7 @@ OUTPUT:
   }
 
   if (command !== "run") {
-    log(`Unknown command: ${command}. Use "qa-cli run --url <URL> --prompt <PROMPT>".`);
+    log(`Unknown command: ${command}. Use "agentqa run --url <URL> --prompt <PROMPT>".`);
     process.exit(1);
   }
 
@@ -96,17 +96,17 @@ OUTPUT:
 
   if (!url || !prompt) {
     log("Error: --url and --prompt are required.");
-    log('Usage: qa-cli run --url <URL> --prompt "<PROMPT>"');
+    log('Usage: agentqa run --url <URL> --prompt "<PROMPT>"');
     process.exit(1);
   }
 
   // Merge settings: file defaults → env vars → CLI args
   const fileSettings = loadSettings();
   const settings: AppSettings = {
-    apiProvider: (args.provider as ApiProvider) || fileSettings.apiProvider || "anthropic",
+    apiProvider: (args.provider as ApiProvider) || (process.env.QA_API_PROVIDER as ApiProvider) || fileSettings.apiProvider || "anthropic",
     apiKey: (args["api-key"] as string) || process.env.QA_API_KEY || fileSettings.apiKey || "",
-    apiBaseUrl: fileSettings.apiBaseUrl || "",
-    model: (args.model as string) || fileSettings.model || ""
+    apiBaseUrl: process.env.QA_API_URL || fileSettings.apiBaseUrl || "",
+    model: (args.model as string) || process.env.QA_API_MODEL || fileSettings.model || ""
   };
 
   if (!settings.apiKey) {
