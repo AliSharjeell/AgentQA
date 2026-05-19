@@ -117,9 +117,9 @@ export default function App(): JSX.Element {
             />
           )}
 
-          <div className="mt-auto border-t border-white/8 pt-3">
+          <div className="mt-auto border-t border-white/5 pt-3">
             <button
-              className="inline-flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-500 hover:bg-white/5 hover:text-zinc-300 transition"
+              className="inline-flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition duration-200 active:scale-[0.98] select-none"
               onClick={() => setPage(page === "main" ? "settings" : "main")}
             >
               <Settings size={14} />
