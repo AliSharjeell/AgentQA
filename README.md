@@ -1,19 +1,164 @@
-# Electron + React Desktop App Boilerplate
+# QA Automation AI
 
-A production-ready starting point for cross-platform desktop applications. Built with **Electron + React + TypeScript + Tailwind CSS + Playwright** — ready to be customized for any use case.
+AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a **desktop app** with live browser preview and as a **headless CLI** for coding agents.
 
 ---
 
-## Features
+## Two Interfaces, One Engine
 
-- **Electron v34** with hidden title bar, Windows Mica material, transparent background
-- **React 18** with TypeScript
-- **Tailwind CSS v3** with a custom dark design system (Poppins font, zinc palette)
-- **electron-vite** for fast HMR in dev and optimized builds
-- **Playwright** browser automation utilities (Chrome profile management, login flows)
-- **JSON data persistence** in `app.getPath("userData")`
-- **IPC bridge** via `contextBridge` — renderer never calls Electron APIs directly
-- **Stub implementations** for lead management, Gmail OAuth, and AI integrations — replace with your own logic
+| | Desktop App | CLI (`qa-cli`) |
+|---|---|---|
+| **For** | Manual QA, demos, debugging | Coding agents, CI/CD pipelines |
+| **Browser** | Embedded BrowserView (visible) | Headless Chrome (via browser-harness) |
+| **Output** | Interactive UI with step progress | Structured JSON to stdout |
+| **AI** | OpenAI / Anthropic (configurable) | Same — uses shared settings |
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Node.js 20+** and **npm 10+**
+- **browser-harness** — `uv tool install git+https://github.com/browser-use/browser-harness`
+- An API key for **OpenAI** or **Anthropic**
+
+### Install
+
+```bash
+git clone https://github.com/AliSharjeell/AgentQA.git
+cd AgentQA
+npm install
+```
+
+### Desktop App
+
+```bash
+npm run dev
+```
+
+Opens an Electron window with a sidebar for tasks and a live browser preview. Configure your API key in **Settings**, then create a task with a URL and prompt.
+
+### CLI (for Coding Agents)
+
+```bash
+# Build the CLI
+npm run build:cli
+
+# Run a QA task
+node out/cli/index.js run \
+  --url https://saucedemo.com \
+  --prompt "Login with standard_user/secret_sauce, add 2 items to cart, complete checkout" \
+  --api-key sk-ant-xxx \
+  --verbose
+```
+
+---
+
+## CLI Usage
+
+```
+qa-cli run --url <URL> --prompt <PROMPT> [options]
+
+Options:
+  --url        Target URL to test (required)
+  --prompt     QA task description (required)
+  --provider   API provider: openai | anthropic (default: from settings)
+  --api-key    API key (default: from settings or $QA_API_KEY)
+  --model      Model name (default: from settings)
+  --verbose    Print step progress to stderr
+  --timeout    Max seconds (default: 120)
+```
+
+### Output Format
+
+**stdout** — structured JSON for agent consumption:
+
+```json
+{
+  "ok": true,
+  "summary": "Successfully logged in, added 2 items, completed checkout. No confirmed bugs found.",
+  "steps": [
+    { "instruction": "Open login page", "status": "done", "result": "Loaded https://saucedemo.com" },
+    { "instruction": "Enter credentials", "status": "done", "result": "Filled username and password" },
+    { "instruction": "Submit login", "status": "done", "result": "Now at /inventory.html" },
+    { "instruction": "Add products to cart", "status": "done", "result": "Added 2 items" },
+    { "instruction": "Complete checkout", "status": "done", "result": "Order confirmed" }
+  ],
+  "durationMs": 14200,
+  "url": "https://saucedemo.com",
+  "error": null
+}
+```
+
+**Exit codes:** `0` = pass, `1` = fail.
+
+### Agent Integration Example
+
+```bash
+# Use with environment variable
+export QA_API_KEY=sk-ant-xxx
+
+# Pipe result to jq
+result=$(node out/cli/index.js run --url https://staging.myapp.com --prompt "Test the signup form")
+echo $result | jq '.ok'
+
+# In a CI script
+if node out/cli/index.js run --url "$PREVIEW_URL" --prompt "Verify login and dashboard"; then
+  echo "QA passed"
+else
+  echo "QA failed"
+fi
+```
+
+---
+
+## Project Structure
+
+```
+src/
+├── core/                    # Shared engine (no Electron dependency)
+│   ├── settings.ts          # Load/save settings.json
+│   ├── api.ts               # OpenAI / Anthropic LLM callers
+│   ├── prompt.ts            # LLM prompt template for browser automation
+│   ├── harness.ts           # browser-harness spawner + set_value preamble
+│   └── engine.ts            # Orchestrator: observe → LLM → act → retry
+├── cli/                     # Headless CLI frontend
+│   └── index.ts             # Arg parser, runner, JSON output
+├── main/                    # Electron desktop app (main process)
+│   ├── index.ts             # Window, BrowserView, IPC registration
+│   └── db/
+│       └── qaTaskRepo.ts    # Task + report JSON storage
+├── preload/                 # Context bridge (renderer ↔ main)
+│   └── index.ts
+├── renderer/                # React frontend
+│   ├── index.html
+│   └── src/
+│       ├── main.tsx         # React entry point
+│       ├── App.tsx          # Sidebar nav + page router
+│       ├── styles.css       # Tailwind + design system
+│       └── pages/           # UI pages (Dashboard, Settings, etc.)
+├── shared/                  # Types shared across all targets
+│   └── types.ts
+scripts/
+└── build-cli.mjs            # esbuild bundler for CLI
+```
+
+---
+
+## How It Works
+
+1. **Observe** — Scrapes the page DOM for interactive elements (buttons, inputs, links) with coordinates
+2. **Plan** — Sends the DOM observation + user prompt to an LLM (Claude/GPT) which generates a Python browser-harness script
+3. **Act** — Pipes the script to `browser-harness` which controls Chrome via CDP (fills forms, clicks buttons, navigates)
+4. **Retry** — If the script fails, retries up to 3 times with the error context
+5. **Report** — Returns structured results with pass/fail, step details, and a summary
+
+### Key Design Decisions
+
+- **`set_value()` over `fill_input()`** — Uses JavaScript to set input values (via prototype descriptor + event dispatch) instead of CDP key events, which avoids double-typing in Electron's BrowserView
+- **No browser bundled** — Uses `browser-harness` which manages its own Chrome daemon. No Playwright browser download required
+- **Shared engine** — `src/core/` has zero Electron imports, so it works in both the desktop app and headless CLI
 
 ---
 
@@ -22,336 +167,78 @@ A production-ready starting point for cross-platform desktop applications. Built
 | Layer | Technology |
 |---|---|
 | Desktop framework | Electron 34 |
-| Build tool | electron-vite 3 |
+| Build tool | electron-vite 3 + esbuild (CLI) |
 | Frontend | React 18 + TypeScript |
 | Styling | Tailwind CSS 3 |
 | Icons | Lucide React |
-| Browser automation | Playwright |
-| AI SDK | Anthropic + OpenAI |
-| Language | TypeScript 5 |
-
----
-
-## Project Structure
-
-```
-src/
-├── main/                    # Electron main process (Node.js)
-│   ├── index.ts            # Entry point — window, menu, IPC registration
-│   ├── db/                 # JSON data stores
-│   │   ├── leadsRepo.ts   # Lead/search CRUD + CSV export
-│   │   └── outreachRepo.ts # Campaign + Gmail OAuth (token storage)
-│   └── playwright/         # Browser automation utilities
-│       ├── profiles.ts    # Chrome profile discovery + management
-│       └── login.ts       # Open browser to URL for manual auth
-├── preload/                 # Context bridge
-│   └── index.ts           # window.mapsLeads API surface
-├── renderer/               # React frontend
-│   ├── index.html
-│   └── src/
-│       ├── main.tsx      # ReactDOM.createRoot entry
-│       ├── App.tsx        # Root component — sidebar + page router
-│       ├── styles.css     # Tailwind layers + .input/.button CSS classes
-│       └── pages/         # Page components (add your own here)
-└── shared/                 # Types shared between main + renderer
-    └── types.ts           # MapsLeadsApi interface + domain types
-```
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- **Node.js 20+**
-- **npm 10+**
-- **Git**
-
-### Clone & Install
-
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/electron-react-boilerplate.git
-cd electron-react-boilerplate
-
-# Install dependencies
-npm install
-```
-
-### Run in Development
-
-```bash
-npm run dev
-```
-
-This opens an Electron window with hot module replacement. The main process restarts on file changes too.
-
-### Build for Production
-
-```bash
-npm run build
-```
-
-Build output goes to `out/`. The packaged app is in `dist/`.
-
-### Type Check
-
-```bash
-npm run typecheck
-```
-
----
-
-## Customizing for Your App
-
-### 1. Rename the App
-
-**package.json:**
-```json
-{
-  "name": "your-app-name",
-  "description": "Your app description"
-}
-```
-
-**src/main/index.ts** — window title:
-```ts
-title: "Your App Name"
-```
-
-**src/renderer/index.html** — browser tab title:
-```html
-<title>Your App Name</title>
-```
-
-**src/renderer/src/App.tsx** — sidebar title:
-```tsx
-<h1 className="text-xl text-white">Your App Name</h1>
-```
-
----
-
-### 2. Add a New Page
-
-**Step 1 — Create the page component** in `src/renderer/src/pages/`:
-
-```tsx
-// src/renderer/src/pages/MyPage.tsx
-export default function MyPage(): JSX.Element {
-  return (
-    <div className="space-y-5">
-      <header>
-        <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Section</p>
-        <h1 className="mt-1 text-2xl text-white">My Page</h1>
-      </header>
-    </div>
-  );
-}
-```
-
-**Step 2 — Add to App.tsx navigation:**
-
-```tsx
-// Add to the Page type union
-type Page = "dashboard" | "settings" | "myPage";
-
-// Add nav button
-<NavButton active={page === "myPage"} onClick={() => setPage("myPage")} icon={<MyIcon size={17} />}>
-  My Page
-</NavButton>
-
-// Add route
-{page === "myPage" && <MyPage />}
-```
-
----
-
-### 3. Add New IPC Handlers
-
-The IPC pattern has 3 steps:
-
-**Step 1 — src/shared/types.ts** — define the method signature:
-
-```ts
-// In MapsLeadsApi interface
-myNewMethod: (param: string) => Promise<string>;
-```
-
-**Step 2 — src/preload/index.ts** — wire it through contextBridge:
-
-```ts
-myNewMethod: (param) => ipcRenderer.invoke("my:newMethod", param),
-```
-
-**Step 3 — src/main/index.ts** — implement the handler:
-
-```ts
-// In registerIpc():
-ipcMain.handle("my:newMethod", async (_, param) => {
-  return `Result: ${param}`;
-});
-```
-
-**Step 4 — Call from React:**
-
-```tsx
-const result = await window.mapsLeads.myNewMethod("hello");
-```
-
----
-
-### 4. Add New Data Fields
-
-**src/shared/types.ts** — extend `LeadRecord`:
-
-```ts
-export interface LeadRecord {
-  id: number;
-  // ... existing fields ...
-  // ── Your custom fields ──
-  myField: string | null;
-  anotherField: number;
-}
-```
-
-**src/main/db/leadsRepo.ts** — update repository functions to handle the new fields.
-
----
-
-### 5. Style with Tailwind + Design System
-
-The `styles.css` includes a base design system:
-
-| Class | Purpose |
-|---|---|
-| `.input` | Text input styling |
-| `.primary-button` | White-filled CTA button |
-| `.secondary-button` | Dark transparent button |
-| `.danger-button` | Red destructive button |
-| `.surface` | Card with border + background |
-| `.lead-table` | Table with sticky header, hover, selection |
-| `.window-drag` | Makes element draggable for title bar |
-| `.window-no-drag` | Prevents children from dragging |
-
-Use the zinc color palette (`text-zinc-100`, `bg-zinc-900`, etc.) for consistency.
-
----
-
-### 6. Browser Automation
-
-The `src/main/playwright/` directory provides Chrome profile utilities:
-
-```ts
-import { getDefaultProfile, listChromeProfiles, openBrowserLogin } from "./playwright/profiles";
-
-// Get available Chrome profiles
-const profiles = listChromeProfiles();
-
-// Open browser for manual login
-await openBrowserLogin(profile.profilePath, profile.profileDirectory);
-```
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Renderer (React)                                            │
-│  - window.mapsLeads.* — IPC calls                            │
-│  - Never calls Electron APIs directly                        │
-│  - No nodeIntegration, no sandbox bypass                     │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ contextBridge (preload/index.ts)
-┌──────────────────────▼──────────────────────────────────────┐
-│  Main Process (Node.js / Electron)                            │
-│  - app.getPath("userData") for data storage                  │
-│  - ipcMain.handle() for request/response IPC                │
-│  - webContents.send() for push events to renderer            │
-│  - Owns: file system, native dialogs, browser automation     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Data Storage
-
-Data is stored as JSON files in `app.getPath("userData")`:
-
-| File | Purpose |
-|---|---|
-| `lead-boilerplate-store.json` | Search + lead data |
-| `outreach-store.json` | Gmail OAuth + campaign data |
-
-Both use debounced writes (300ms delay) to avoid excessive disk I/O.
-
-### IPC Channels
-
-| Channel | Direction | Purpose |
-|---|---|---|
-| `searches:list` | invoke | Get all searches |
-| `leads:list` | invoke | Get all leads |
-| `search:start` | invoke | Start a scraper run |
-| `leads:exportCsv` | invoke | Export to CSV |
-| `openExternal` | invoke | Open URL in system browser |
-| `app:profiles` | invoke | List available Chrome profiles |
-| `gmail:connect` | invoke | Start Gmail OAuth flow |
-| `leads:progress` | send (main→renderer) | Real-time scraper updates |
-| `campaign:progress` | send (main→renderer) | Real-time campaign updates |
-
----
-
-## Design System
-
-### Color Palette
-
-Uses `zinc` palette (neutral gray) for a cohesive dark theme.
-
-- Background: `#101114` (main area), transparent (sidebar)
-- Text: `#d4d4d8` (body), `#ffffff` (headings)
-- Borders: `border-white/10` (subtle), `border-white/20` (active)
-
-### Typography
-
-- **Font:** Poppins (Google Fonts) — set in `styles.css`
-- Fallback: `ui-sans-serif, system-ui, sans-serif`
-- Scale: `text-xs` (labels), `text-sm` (body), `text-lg` (subheadings), `text-2xl` (headings)
-
-### Spacing
-
-Use Tailwind spacing (`space-y-5`, `p-5`, `gap-3`, etc.). Standard card padding is `p-5`.
+| Browser automation | browser-harness (CDP) |
+| AI | Anthropic Claude / OpenAI GPT |
+| Language | TypeScript 5 (ES2022) |
 
 ---
 
 ## Available Scripts
 
 ```bash
-npm run dev        # Start dev server with HMR
-npm run build      # Production build
-npm run typecheck  # TypeScript type checking
-npm run start      # Preview production build locally
+npm run dev          # Desktop app with HMR
+npm run build        # Production build (desktop)
+npm run build:cli    # Bundle CLI to out/cli/index.js
+npm run typecheck    # TypeScript check (full project)
+npm run typecheck:cli  # TypeScript check (CLI only)
+npm run start        # Preview production build
 ```
+
+---
+
+## Configuration
+
+Settings are stored in `%APPDATA%/qa-automation-ai/settings.json` (shared between desktop and CLI):
+
+```json
+{
+  "apiProvider": "anthropic",
+  "apiKey": "sk-ant-xxx",
+  "apiBaseUrl": "",
+  "model": "claude-sonnet-4-20250514"
+}
+```
+
+The CLI also accepts settings via command-line flags and the `$QA_API_KEY` environment variable.
+
+---
+
+## QA Agent Rules
+
+The AI agent follows these rules when testing:
+
+- Never report a bug unless verified twice after waiting, scrolling, and checking the correct page
+- If no bugs are found, say **"No confirmed bugs found"** — never invent issues
+- If navigation fails or URL becomes `chrome-error://chromewebdata`, mark as **infrastructure failure**, not a website bug
+- Use `set_value()` for all form inputs (React/Vue compatible)
+- Wrap all scripts in try/except with structured error output
 
 ---
 
 ## Troubleshooting
 
-### "Cannot find module" after cloning
+### "Browser-harness could not be started"
 
-Run `npm install` — dependencies are not committed to the repo.
+Install it: `uv tool install git+https://github.com/browser-use/browser-harness`
 
-### Electron window shows nothing
+### Double-typing in form fields
 
-Make sure `npm run dev` opened the Electron window (not just the browser). The Electron window has a custom title bar with a drag zone.
+This was fixed by using `set_value()` (JavaScript-based) instead of `fill_input()` (CDP key events). If you see it, make sure you're on the latest build.
 
-### TypeScript errors in shared/types.ts
+### CLI returns "No API key found"
 
-The boilerplate uses domain stub types. Replace them with your actual domain types — TypeScript will enforce consistency across main/preload/renderer.
+Pass `--api-key`, set `$QA_API_KEY`, or save your key in the desktop app's Settings page.
 
-### Playwright browser doesn't launch
+### Desktop app shows loading bar when page is already loaded
 
-Make sure Google Chrome is installed. Playwright uses `chromium.launchPersistentContext` with the `chrome` channel. On Windows, ensure Chrome is in your PATH or in the default installation location.
+Fixed — the app now skips `loadURL()` if the preview is already on the target URL.
 
 ---
 
 ## License
 
-MIT — use this boilerplate to build any desktop application.
+MIT
