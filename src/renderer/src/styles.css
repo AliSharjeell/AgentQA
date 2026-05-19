@@ -131,7 +131,9 @@ textarea {
   }
 
   .mica-sidebar {
-    background: transparent;
+    background: rgba(18, 18, 22, 0.45);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
   }
 
   .lead-table {
