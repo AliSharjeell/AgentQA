@@ -1,0 +1,184 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Poppins, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  background: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  letter-spacing: 0;
+  font-family: Poppins, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(82 82 91 / 0.75) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgb(82 82 91 / 0.72);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(161 161 170 / 0.55);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+@layer components {
+  .input {
+    @apply min-h-11 rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-400/20;
+  }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 1000px #18181b inset !important;
+    -webkit-text-fill-color: #d4d4d8 !important;
+    caret-color: #d4d4d8 !important;
+  }
+
+  input[list]::-webkit-calendar-picker-indicator {
+    display: none !important;
+  }
+
+  .primary-button {
+    @apply inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/20 bg-white px-4 text-sm font-normal text-zinc-950;
+  }
+
+  .secondary-button {
+    @apply inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 text-sm font-normal text-zinc-100 hover:bg-white/10;
+  }
+
+  .danger-button {
+    @apply inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-red-400 bg-red-500 px-4 text-sm font-normal text-white hover:bg-red-400;
+  }
+
+  .icon-button {
+    @apply grid h-11 w-11 place-items-center rounded-lg border border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10;
+  }
+
+  .surface {
+    @apply rounded-lg border border-white/10 bg-zinc-900/70 shadow-xl shadow-black/10;
+  }
+
+  input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: #27272a;
+    border: 1px solid #52525b;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  input[type="checkbox"]:checked {
+    background-color: #71717a;
+    border-color: #71717a;
+  }
+
+  input[type="checkbox"]:checked::after {
+    content: "";
+    display: block;
+    width: 5px;
+    height: 9px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(1px, -1px);
+    margin: 0 auto;
+  }
+
+  .app-shell {
+    background: transparent;
+  }
+
+  .main-area {
+    background: #101114;
+  }
+
+  .mica-sidebar {
+    background: transparent;
+  }
+
+  .lead-table {
+    @apply w-full border-collapse text-left text-sm;
+  }
+
+  .lead-table th {
+    @apply sticky top-0 z-10 border-b border-white/10 px-3 py-3 text-xs font-normal uppercase tracking-wide text-zinc-500;
+  }
+
+  .lead-table td {
+    @apply border-b border-white/10 px-3 py-3 align-top text-zinc-300;
+  }
+
+  .lead-table tr:hover td {
+    @apply bg-white/[0.035];
+  }
+
+  .lead-table tr.selected td {
+    @apply bg-white/[0.07];
+  }
+
+  .lead-table tr:hover td:first-child {
+    @apply rounded-l-lg;
+  }
+
+  .lead-table tr:hover td:last-child {
+    @apply rounded-r-lg;
+  }
+
+  .lead-table tr.selected td:first-child {
+    @apply rounded-l-lg;
+  }
+
+  .lead-table tr.selected td:last-child {
+    @apply rounded-r-lg;
+  }
+
+  .table-link {
+    @apply inline-flex h-8 items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 text-xs text-zinc-100 hover:bg-white/10;
+  }
+
+  .table-input {
+    @apply h-8 w-40 rounded-md border border-white/10 bg-black/20 px-2 text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-400/15;
+  }
+
+  .window-drag {
+    -webkit-app-region: drag;
+  }
+
+  .window-no-drag,
+  button,
+  input,
+  select,
+  textarea {
+    -webkit-app-region: no-drag;
+  }
+}
