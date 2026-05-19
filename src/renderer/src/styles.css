@@ -25,30 +25,29 @@ textarea {
 }
 
 * {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(82 82 91 / 0.75) transparent;
+  scrollbar-width: none;
 }
 
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-*::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
 }
 
-*::-webkit-scrollbar-thumb {
-  background: rgb(82 82 91 / 0.72);
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background-clip: padding-box;
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
 }
 
-*::-webkit-scrollbar-thumb:hover {
-  background: rgb(161 161 170 / 0.55);
-  border: 3px solid transparent;
-  background-clip: padding-box;
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.35);
 }
 
 @layer components {
