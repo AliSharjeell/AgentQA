@@ -166,7 +166,7 @@ export default function App(): JSX.Element {
             {/* URL input */}
             <div className="relative flex-1 max-w-2xl mx-auto">
               <input
-                className="input w-full text-xs"
+                className="browser-url-input"
                 placeholder="Enter URL..."
                 defaultValue={browserState.url}
                 onKeyDown={(e) => {
@@ -181,7 +181,7 @@ export default function App(): JSX.Element {
               />
               {browserState.ready && (
                 <button
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-600 hover:text-zinc-300"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-zinc-200 transition-colors duration-150"
                   onClick={() => {
                     if (window.qaApi && browserState.url) {
                       void window.qaApi.navigateTo({ url: browserState.url });
