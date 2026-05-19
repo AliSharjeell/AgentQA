@@ -343,22 +343,20 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
   const isPaused = task.status === "paused";
 
   return (
-    <div
-      className={`rounded-xl border transition-all duration-200 ${
-        active
-          ? "border-indigo-500/30 bg-indigo-500/5 shadow-lg shadow-indigo-500/5"
-          : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/8"
-      } overflow-hidden`}
-    >
+    <div className="group flex flex-col rounded-lg overflow-hidden transition-all duration-200">
       <div
-        className="flex cursor-pointer items-center gap-2 px-3 py-2.5 transition"
+        className={`flex cursor-pointer items-center gap-2.5 px-3 py-2 transition rounded-lg ${
+          active
+            ? "bg-white/8 text-white font-medium"
+            : "text-zinc-400 hover:bg-white/4 hover:text-zinc-200"
+        }`}
         onClick={onClick}
       >
         <StatusIcon status={task.status} size={14} />
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs text-zinc-200">{task.name}</p>
-          <p className="truncate text-[10px] text-zinc-600">{task.targetUrl}</p>
+          <p className="truncate text-xs">{task.name}</p>
+          <p className={`truncate text-[10px] ${active ? "text-zinc-300" : "text-zinc-500"}`}>{task.targetUrl}</p>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -382,34 +380,34 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
               <Play size={11} />
             </button>
           )}
-          <button className="grid h-6 w-6 place-items-center rounded text-zinc-600 hover:bg-white/10 hover:text-red-400" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
+          <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
             <Trash2 size={11} />
           </button>
-          <button className="grid h-6 w-6 place-items-center rounded text-zinc-600 hover:bg-white/10" onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}>
+          <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-white/10" onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}>
             {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
           </button>
         </div>
       </div>
 
       {expanded && (
-        <div className="border-t border-white/8">
+        <div className="pl-6 pr-2.5 py-2 space-y-2 text-zinc-400 text-xs">
           {task.steps.length > 0 && (
-            <div className="px-3 py-2 space-y-1">
-              <p className="text-[10px] uppercase tracking-wide text-zinc-600 mb-1.5">Steps</p>
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Steps</p>
               {task.steps.map((step) => (
                 <StepRow key={step.id} step={step} />
               ))}
             </div>
           )}
           {task.report && (
-            <div className="border-t border-white/8 px-3 py-2">
-              <p className="text-[10px] uppercase tracking-wide text-zinc-600 mb-1.5">Report</p>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Report</p>
               <ReportBadge report={task.report} />
             </div>
           )}
           {task.aiPlan && (
-            <div className="border-t border-white/8 px-3 py-2">
-              <p className="text-[10px] uppercase tracking-wide text-zinc-600 mb-1">AI Plan</p>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">AI Plan</p>
               <p className="text-xs text-zinc-400">{task.aiPlan}</p>
             </div>
           )}
