@@ -246,7 +246,7 @@ Required output:
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
 - Emit steps with {"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."}.
-- Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}.
+- Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}. Ensure that "summary" is a natural-language, short 1-line explanation of the final outcome (e.g., "Successfully logged in and verified the settings tab is visible." or "Failed to complete checkout because the card input was disabled.").
 - Start by opening the target URL.
 - Inspect DOM state with js(...) before acting.
 - Choose actions from observed DOM and page state. Do not assume this is GitHub-specific.
