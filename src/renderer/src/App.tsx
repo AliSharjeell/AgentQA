@@ -56,6 +56,23 @@ export default function App(): JSX.Element {
   });
   const [tasks, setTasks] = useState<QaTask[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [urlInputVal, setUrlInputVal] = useState("");
+
+  useEffect(() => {
+    setUrlInputVal(browserState.url || "");
+  }, [browserState.url]);
+
+  const handleNavigate = useCallback(() => {
+    if (!window.qaApi || !urlInputVal.trim()) return;
+    const url = urlInputVal.trim();
+    let urlToUse = url;
+    if (!url.includes(".") || url.includes(" ")) {
+      urlToUse = `https://www.google.com/search?q=${encodeURIComponent(url)}`;
+    } else if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      urlToUse = `https://${url}`;
+    }
+    void window.qaApi.navigateTo({ url: urlToUse });
+  }, [urlInputVal]);
 
   useEffect(() => {
     localStorage.setItem(navStorageKey, page);
