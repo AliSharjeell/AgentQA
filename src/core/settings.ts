@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AppSettings } from '../shared/types';
 
-const DEFAULT_DIR = path.join(process.env.APPDATA || process.env.HOME || '.', 'qa-automation-ai');
+const DEFAULT_DIR = path.join(process.env.APPDATA || process.env.HOME || '.', 'agentqa');
 
 export function loadSettings(baseDir?: string): AppSettings {
   const dir = baseDir || DEFAULT_DIR;
