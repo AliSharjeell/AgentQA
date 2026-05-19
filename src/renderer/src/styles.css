@@ -89,7 +89,7 @@ textarea {
   }
 
   .browser-url-input {
-    @apply h-7 w-full rounded-full border border-white/5 bg-white/6 px-8 text-xs text-zinc-200 placeholder:text-zinc-500 text-center outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/10 focus:text-left;
+    @apply h-7 w-full rounded-full border border-white/5 bg-white/5 px-8 text-xs text-zinc-200 placeholder:text-zinc-500 text-center outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/10 focus:text-left;
   }
 
   .surface {

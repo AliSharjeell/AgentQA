@@ -308,7 +308,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
       <div className="mt-auto pt-3 border-t border-white/5 space-y-1.5">
         <div className="relative flex items-center">
           <input
-            className={`h-9 w-full rounded-full border border-white/5 bg-white/6 pl-4 pr-10 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/10${urlError ? " border-red-500/50" : ""}`}
+            className={`h-9 w-full rounded-full border border-white/5 bg-white/5 pl-4 pr-10 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/10${urlError ? " border-red-500/50" : ""}`}
             placeholder="Enter a task..."
             value={inputName}
             onChange={(e) => { setInputName(e.target.value); setUrlError(""); setShowUrlHint(false); }}
