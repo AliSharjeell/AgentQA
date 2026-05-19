@@ -119,9 +119,9 @@ export default function App(): JSX.Element {
     <main className="app-shell min-h-screen text-zinc-100">
       <div className="flex min-h-screen">
         {/* ── Sidebar ── */}
-        <aside className="mica-sidebar window-drag sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden px-4 py-4">
+        <aside className="mica-sidebar sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden px-4 py-4">
           <div className="flex flex-col gap-3 pb-3 border-b border-white/5">
-            <div className="flex items-center py-1.5">
+            <div className="window-drag flex items-center py-1.5">
               <h1 className="text-sm font-semibold text-white tracking-wide">QA Automation AI</h1>
             </div>
             <button
@@ -398,7 +398,10 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
       </div>
 
       {active && (
-        <div className="border-t border-white/5 pl-8 pr-3 py-2.5 space-y-2.5 text-zinc-400 text-xs">
+        <div 
+          className="border-t border-white/5 pl-8 pr-3 py-2.5 space-y-2.5 text-zinc-400 text-xs"
+          onClick={(e) => e.stopPropagation()}
+        >
           {task.steps.length > 0 && (
             <div className="space-y-1">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Steps</p>
