@@ -65,26 +65,20 @@ import {
 
 // ─── Browser-Use Agent ───────────────────────────────────────────────────────
 
-type BrowserUseAgent = import("browser-use").Agent;
-
 async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<void> {
-  const { Agent, Browser, ChatAnthropic, ChatOpenAI } = await import("browser-use");
+  const { Agent } = await import("browser-use");
+  const playwright = await import("playwright");
 
-  // Build LLM from settings
-  let llm: InstanceType<typeof ChatAnthropic> | InstanceType<typeof ChatOpenAI>;
-  if (settings.apiProvider === "openai") {
-    llm = new ChatOpenAI({
-      model: settings.model || "gpt-4o",
-      apiKey: settings.apiKey,
-      ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {})
-    });
-  } else {
-    llm = new ChatAnthropic({
-      model: settings.model || "claude-sonnet-4-20250514",
-      apiKey: settings.apiKey,
-      ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {})
-    });
-  }
+  // Build browser-use LLM from settings
+  const LlmClass = settings.apiProvider === "openai"
+    ? (await import("browser-use/llm/openai")).ChatOpenAI
+    : (await import("browser-use/llm/anthropic")).ChatAnthropic;
+
+  const buLlm = new LlmClass({
+    apiKey: settings.apiKey,
+    ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {}),
+    model: settings.model || undefined
+  });
 
   const screenshotDir = path.join(app.getPath("userData"), "screenshots");
   fs.mkdirSync(screenshotDir, { recursive: true });
@@ -101,11 +95,10 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
   }[] = [];
 
   let stepCount = 0;
-  let browser: Browser | null = null;
+  let browser: import("playwright").Browser | null = null;
 
   try {
-    // Create browser and page
-    browser = new Browser({ headless: false });
+    browser = await playwright.chromium.launch({ headless: false });
     const context = await browser.newContext({
       acceptDownloads: true,
       viewport: { width: 1280, height: 800 }
@@ -115,19 +108,19 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
     // Create agent
     const agent = new Agent({
       task: task.name,
-      llm,
+      llm: buLlm,
       page,
       max_failures: 3,
       use_thinking: true,
-      use_judge: false, // simplify for now
+      use_judge: false,
       enable_planning: true,
       step_timeout: 120,
       directly_open_url: true,
-      // Step callback — fires after each AI action
-      register_new_step_callback: ({ step_info }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      register_new_step_callback: (state: any) => {
         stepCount += 1;
         const stepId = generateId();
-        const stepName = step_info?.step_name ?? `Step ${stepCount}`;
+        const stepName = state?.step_info?.step_name ?? `Step ${stepCount}`;
         const step: typeof steps[number] = {
           id: stepId,
           order: stepCount,
@@ -136,34 +129,25 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
           timestamp: new Date().toISOString()
         };
         steps.push(step);
-        setTaskSteps(task.id, steps);
-        emitProgress({
-          type: "step_complete",
-          taskId: task.id,
-          stepId,
-          message: stepName
-        });
+        setTaskSteps(task.id, [...steps]);
+        emitProgress({ type: "step_complete", taskId: task.id, stepId, message: stepName });
       },
-      // Done callback — fires when agent completes
-      register_done_callback: ({ result }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      register_done_callback: (history: any) => {
         const lastStep = steps[steps.length - 1];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const resultText = (history?.result as any[])?.map((r) => r.text_content ?? "").join(" ") ?? "Task completed";
         if (lastStep && lastStep.status === "running") {
           lastStep.status = "done";
-          lastStep.result = result ?? "Task completed";
+          lastStep.result = resultText.slice(0, 200);
           lastStep.timestamp = new Date().toISOString();
         }
-        // Take final screenshot
         void capturePageScreenshot(page, screenshotDir).then((sp) => {
-          if (sp) {
-            if (lastStep) lastStep.screenshotPath = sp;
-            setTaskSteps(task.id, [...steps]);
-          }
+          if (sp && lastStep) lastStep.screenshotPath = sp;
+          setTaskSteps(task.id, [...steps]);
         });
       },
-      // Should stop callback — check stopTaskFlag
-      register_should_stop_callback: () => {
-        return stopTaskFlag;
-      }
+      register_should_stop_callback: () => Promise.resolve(stopTaskFlag)
     });
 
     // Navigate to target URL before running agent
@@ -171,9 +155,8 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
     emitProgress({ type: "task_progress", taskId: task.id, message: `Navigated to ${task.targetUrl}. Starting AI agent...` });
 
     // Set initial step
-    const firstStepId = generateId();
     steps.push({
-      id: firstStepId,
+      id: generateId(),
       order: 1,
       instruction: `Navigate to ${task.targetUrl} and ${task.name}`,
       status: "done",
@@ -181,28 +164,22 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
       result: `Loaded ${task.targetUrl}`
     });
     stepCount = 1;
-    setTaskSteps(task.id, steps);
+    setTaskSteps(task.id, [...steps]);
 
-    // Run agent
     emitProgress({ type: "task_progress", taskId: task.id, message: "AI agent is analyzing the page..." });
-    const result = await agent.run();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (agent as any).run();
 
-    // Finalize steps
+    // Finalize any running steps
     for (const step of steps) {
       if (step.status === "running") {
         step.status = "done";
-        step.result = result ?? "Completed";
         step.timestamp = new Date().toISOString();
       }
     }
     setTaskSteps(task.id, [...steps]);
 
-    // Capture final screenshot
-    const finalScreenshot = await capturePageScreenshot(page, screenshotDir);
-
-    // Build report
     const endTime = new Date().toISOString();
-    const startTime = task.createdAt;
     const passed = steps.filter((s) => s.status === "done").length;
     const failed = steps.filter((s) => s.status === "failed").length;
 
@@ -216,9 +193,9 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
       passedSteps: passed,
       failedSteps: failed,
       skippedSteps: 0,
-      startTime,
+      startTime: task.createdAt,
       endTime,
-      durationMs: new Date(endTime).getTime() - new Date(startTime).getTime(),
+      durationMs: new Date(endTime).getTime() - new Date(task.createdAt).getTime(),
       steps: steps.map((s) => ({
         instruction: s.instruction,
         status: s.status,
@@ -228,11 +205,11 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
         error: s.error
       })),
       screenshots: steps.flatMap((s) => (s.screenshotPath ? [s.screenshotPath] : [])),
-      aiReasoning: result ?? "Executed by browser-use AI agent."
+      aiReasoning: "Executed by browser-use AI agent."
     };
 
     attachReport(task.id, report);
-    updateTask(task.id, { status: failed === 0 ? "done" : "partial" });
+    updateTask(task.id, { status: failed === 0 ? "done" : "paused" });
     emitProgress({ type: "task_complete", taskId: task.id, data: report });
 
     await browser.close();
@@ -240,7 +217,6 @@ async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<
     const message = err instanceof Error ? err.message : String(err);
     emitProgress({ type: "task_failed", taskId: task.id, message });
     updateTask(task.id, { status: "failed" });
-    // Mark any running step as failed
     for (const step of steps) {
       if (step.status === "running") {
         step.status = "failed";
@@ -358,14 +334,14 @@ function attachBrowserViewToMain(): void {
 
 function resizeBrowserView(): void {
   if (!mainWindow || !browserView) return;
-  const [winW, winH] = mainWindow.getContentSize();
+  const bounds = mainWindow.getContentBounds();
   const sidebarW = 288;
   const titleH = 48;
   browserView.setBounds({
     x: sidebarW,
     y: titleH,
-    width: Math.max(600, winW - sidebarW),
-    height: Math.max(400, winH - titleH)
+    width: Math.max(600, bounds.width - sidebarW),
+    height: Math.max(400, bounds.height - titleH)
   });
 }
 
