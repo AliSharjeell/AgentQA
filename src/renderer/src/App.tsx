@@ -23,7 +23,8 @@ import {
   ExternalLink,
   RefreshCw,
   ArrowLeft,
-  ArrowRight
+  ArrowRight,
+  Search
 } from "lucide-react";
 import type {
   QaTask,
