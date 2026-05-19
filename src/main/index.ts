@@ -539,7 +539,7 @@ function createWindow(): void {
       symbolColor: "#d4d4d8",
       height: 48
     },
-    backgroundColor: "#09090b",
+    backgroundColor: process.platform === "win32" ? "#00000000" : "#09090b",
     backgroundMaterial: process.platform === "win32" ? "mica" : undefined,
     roundedCorners: true,
     webPreferences: {
