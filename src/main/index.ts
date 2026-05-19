@@ -27,6 +27,7 @@
  */
 import path from "node:path";
 import fs from "node:fs";
+import { spawn } from "node:child_process";
 import {
   app,
   BrowserWindow,
@@ -254,9 +255,6 @@ async function runDirectBrowserCheck(task: QaTask): Promise<boolean> {
     return false;
   }
 
-  const playwright = await import("playwright");
-  const preview = await getPreviewAutomationTarget(playwright, task.targetUrl);
-  const page = preview.page;
   const steps: QaTask["steps"] = [];
   const startTime = new Date().toISOString();
 
@@ -274,50 +272,41 @@ async function runDirectBrowserCheck(task: QaTask): Promise<boolean> {
   };
 
   try {
-    emitProgress({ type: "task_progress", taskId: task.id, message: "Running browser check in preview..." });
-    addStep(`Open ${task.targetUrl}`, "running");
-    await page.goto(task.targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    steps[0].status = "done";
-    steps[0].result = `Loaded ${page.url()}`;
-    setTaskSteps(task.id, [...steps]);
+    emitProgress({ type: "task_progress", taskId: task.id, message: "Running browser-harness check in preview..." });
+    const harnessResult = await runBrowserHarnessRepositoryCheck(task.targetUrl, (event) => {
+      if (event.status === "running") {
+        addStep(event.instruction, "running");
+        return;
+      }
 
-    addStep("Click the Repositories tab", "running");
-    const repositoriesTab = page.getByRole("link", { name: /repositories?/i }).first();
-    await repositoriesTab.waitFor({ state: "visible", timeout: 15000 });
-    await repositoriesTab.click();
-    await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+      const step = steps[steps.length - 1];
+      if (step && step.status === "running") {
+        step.status = event.status;
+        step.result = event.result;
+        step.error = event.error;
+        step.timestamp = new Date().toISOString();
+        setTaskSteps(task.id, [...steps]);
+      } else {
+        addStep(event.instruction, event.status, event.result, event.error);
+      }
+    });
 
-    const currentUrl = page.url();
-    const repositoriesSelected = /[?&]tab=repositories\b/i.test(currentUrl) ||
-      await page.locator('a[href*="tab=repositories"][aria-current="page"]').count().then((count) => count > 0) ||
-      await page.getByRole("link", { name: /repositories?/i }).first().evaluate((element) => {
-        const link = element as HTMLAnchorElement;
-        return link.getAttribute("aria-current") === "page" ||
-          link.classList.contains("selected") ||
-          link.parentElement?.classList.contains("selected") ||
-          window.getComputedStyle(link).fontWeight === "600";
-      }).catch(() => false) ||
-      await page.getByPlaceholder(/find a repository/i).count().then((count) => count > 0) ||
-      await page.locator('[data-testid="repositories-list"], [itemprop="owns"], a[itemprop="name codeRepository"]').count().then((count) => count > 0);
-
-    if (!repositoriesSelected) {
-      throw new Error(`Repositories tab did not become active. Current URL: ${currentUrl}`);
+    if (!harnessResult.ok) {
+      throw new Error(harnessResult.error);
     }
 
-    steps[1].status = "done";
-    steps[1].result = `Repositories tab is active at ${currentUrl}`;
-    setTaskSteps(task.id, [...steps]);
-
     const endTime = new Date().toISOString();
+    const passedSteps = steps.filter((step) => step.status === "done").length;
+    const failedSteps = steps.filter((step) => step.status === "failed").length;
     const report: QaReport = {
       taskId: task.id,
       taskName: task.name,
       targetUrl: task.targetUrl,
       overallStatus: "pass",
-      summary: "The Repositories tab opened successfully in the preview browser.",
+      summary: harnessResult.summary,
       totalSteps: steps.length,
-      passedSteps: steps.length,
-      failedSteps: 0,
+      passedSteps,
+      failedSteps,
       skippedSteps: 0,
       startTime,
       endTime,
@@ -330,7 +319,7 @@ async function runDirectBrowserCheck(task: QaTask): Promise<boolean> {
         error: step.error
       })),
       screenshots: [],
-      aiReasoning: "Executed by deterministic Playwright automation against the embedded preview browser."
+      aiReasoning: "Executed by browser-harness against the embedded preview browser via CDP."
     };
 
     attachReport(task.id, report);
@@ -351,9 +340,195 @@ async function runDirectBrowserCheck(task: QaTask): Promise<boolean> {
     emitProgress({ type: "task_failed", taskId: task.id, message });
     updateTask(task.id, { status: "failed" });
     return true;
-  } finally {
-    preview.disconnect();
   }
+}
+
+type HarnessStepEvent = {
+  instruction: string;
+  status: TaskStepStatus;
+  result?: string;
+  error?: string;
+};
+
+type HarnessCheckResult = {
+  ok: boolean;
+  summary: string;
+  error?: string;
+};
+
+function runBrowserHarnessRepositoryCheck(
+  targetUrl: string,
+  onStep: (event: HarnessStepEvent) => void
+): Promise<HarnessCheckResult> {
+  const script = `
+import json
+import time
+
+target_url = ${JSON.stringify(targetUrl)}
+
+def emit(payload):
+    print("BH_EVENT " + json.dumps(payload), flush=True)
+
+def find_repo_tab_rect():
+    return js("""
+(() => {
+  const links = Array.from(document.querySelectorAll('a'));
+  const link = links.find((item) => /Repositories/i.test(item.textContent || ''));
+  if (!link) return null;
+  const rect = link.getBoundingClientRect();
+  return {
+    x: Math.round(rect.left + rect.width / 2),
+    y: Math.round(rect.top + rect.height / 2),
+    text: (link.textContent || '').trim()
+  };
+})()
+""")
+
+def repository_state():
+    return js("""
+(() => {
+  const repoInput = document.querySelector('input[placeholder*="repository" i]');
+  const repoList = document.querySelector('[data-testid="repositories-list"], [itemprop="owns"], a[itemprop="name codeRepository"]');
+  const links = Array.from(document.querySelectorAll('a'));
+  const repoLink = links.find((item) => /Repositories/i.test(item.textContent || ''));
+  const selected = repoLink && (
+    repoLink.getAttribute('aria-current') === 'page' ||
+    repoLink.classList.contains('selected') ||
+    repoLink.parentElement?.classList.contains('selected') ||
+    getComputedStyle(repoLink).fontWeight === '600'
+  );
+  return {
+    ok: Boolean(repoInput || repoList || selected || /[?&]tab=repositories\\b/i.test(location.href)),
+    url: location.href,
+    title: document.title,
+    hasSearch: Boolean(repoInput),
+    hasRepoList: Boolean(repoList),
+    selected: Boolean(selected)
+  };
+})()
+""")
+
+try:
+    emit({"instruction": "Open " + target_url, "status": "running"})
+    goto_url(target_url)
+    wait_for_load()
+    info = page_info()
+    emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
+
+    emit({"instruction": "Click the Repositories tab", "status": "running"})
+    rect = find_repo_tab_rect()
+    if not rect:
+        raise Exception("Could not find the Repositories tab in the preview browser.")
+    click_at_xy(rect["x"], rect["y"])
+    wait_for_load()
+    time.sleep(1)
+    state = repository_state()
+    if not state.get("ok"):
+        raise Exception("Repositories tab did not become active. Current URL: " + state.get("url", "unknown"))
+    emit({
+        "instruction": "Click the Repositories tab",
+        "status": "done",
+        "result": "Repositories view is active at " + state.get("url", "unknown")
+    })
+    emit({
+        "final": True,
+        "ok": True,
+        "summary": "The Repositories tab opened successfully in the live preview browser."
+    })
+except Exception as exc:
+    emit({
+        "instruction": "Run browser-harness repository check",
+        "status": "failed",
+        "error": str(exc)
+    })
+    emit({
+        "final": True,
+        "ok": False,
+        "summary": "Browser-harness repository check failed.",
+        "error": str(exc)
+    })
+`;
+
+  return new Promise((resolve) => {
+    const child = spawn("browser-harness", {
+      shell: true,
+      env: {
+        ...process.env,
+        BU_CDP_URL: `http://127.0.0.1:${PREVIEW_DEBUG_PORT}`
+      },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+
+    let finalResult: HarnessCheckResult | null = null;
+    let stderr = "";
+    let stdoutBuffer = "";
+
+    const handleLine = (line: string): void => {
+      if (!line.startsWith("BH_EVENT ")) return;
+      try {
+        const event = JSON.parse(line.slice("BH_EVENT ".length)) as Partial<HarnessStepEvent> & Partial<HarnessCheckResult> & { final?: boolean };
+        if (event.final) {
+          finalResult = {
+            ok: Boolean(event.ok),
+            summary: event.summary ?? "",
+            error: event.error
+          };
+          return;
+        }
+
+        if (event.instruction && event.status) {
+          onStep({
+            instruction: event.instruction,
+            status: event.status,
+            result: event.result,
+            error: event.error
+          });
+        }
+      } catch {
+        // Ignore non-JSON harness output.
+      }
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        handleLine(line);
+      }
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+
+    child.on("error", (error) => {
+      resolve({
+        ok: false,
+        summary: "Browser-harness could not be started.",
+        error: `${error.message}. Install it with: uv tool install git+https://github.com/browser-use/browser-harness`
+      });
+    });
+
+    child.on("close", (code) => {
+      if (stdoutBuffer.trim()) {
+        handleLine(stdoutBuffer.trim());
+      }
+
+      if (finalResult) {
+        resolve(finalResult);
+        return;
+      }
+
+      resolve({
+        ok: false,
+        summary: "Browser-harness exited without a result.",
+        error: stderr.trim() || `browser-harness exited with code ${code ?? "unknown"}`
+      });
+    });
+
+    child.stdin.end(script);
+  });
 }
 
 async function getPreviewAutomationTarget(
