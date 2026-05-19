@@ -343,9 +343,15 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
   const isPaused = task.status === "paused";
 
   return (
-    <div className="rounded-lg border border-white/8 bg-zinc-900/40 overflow-hidden">
+    <div
+      className={`rounded-xl border transition-all duration-200 ${
+        active
+          ? "border-indigo-500/30 bg-indigo-500/5 shadow-lg shadow-indigo-500/5"
+          : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/8"
+      } overflow-hidden`}
+    >
       <div
-        className={`flex cursor-pointer items-center gap-2 px-3 py-2.5 transition ${active ? "bg-white/5" : "hover:bg-white/5"}`}
+        className="flex cursor-pointer items-center gap-2 px-3 py-2.5 transition"
         onClick={onClick}
       >
         <StatusIcon status={task.status} size={14} />
