@@ -744,6 +744,10 @@ async function runQaTask(taskId: string): Promise<void> {
   try {
     updateTask(taskId, { status: "running" });
 
+    if (isBrowserHarnessTask(task) && await runDirectBrowserCheck(task)) {
+      return;
+    }
+
     const settings = loadSettings();
     if (!settings.apiKey) {
       if (await runDirectBrowserCheck(task)) {
@@ -778,6 +782,10 @@ async function runQaTask(taskId: string): Promise<void> {
       runningTaskId = null;
     }
   }
+}
+
+function isBrowserHarnessTask(task: QaTask): boolean {
+  return /repositor(?:y|ies)|repo\s+tab|tab\s+works/i.test(task.name);
 }
 
 function isToolUseResponseError(message: string): boolean {
