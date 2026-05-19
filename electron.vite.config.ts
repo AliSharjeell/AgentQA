@@ -7,6 +7,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
+        external: [
+          /^browser-use(\/.*)?$/,
+          /^playwright(\/.*)?$/,
+          /^playwright-core(\/.*)?$/,
+          /^chromium-bidi(\/.*)?$/
+        ],
         input: {
           index: resolve(__dirname, "src/main/index.ts")
         }
