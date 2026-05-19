@@ -126,7 +126,7 @@ textarea {
   }
 
   .main-area {
-    background: transparent;
+    background: #09090b;
   }
 
   .mica-sidebar {
@@ -134,7 +134,8 @@ textarea {
   }
 
   .mica-topbar {
-    background: transparent;
+    background: #09090b;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
 
   .lead-table {
