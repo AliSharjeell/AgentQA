@@ -175,6 +175,7 @@ function runBrowserHarnessScript(
   onStep: (event: HarnessStepEvent) => void
 ): Promise<HarnessCheckResult> {
   const isRepositoryTask = isBrowserHarnessRepositoryTask(task);
+  const isRepoOwnerProfileTask = isBrowserHarnessRepoOwnerProfileTask(task);
   const script = `
 import json
 import time
@@ -182,6 +183,7 @@ import time
 target_url = ${JSON.stringify(task.targetUrl)}
 task_name = ${JSON.stringify(task.name)}
 is_repository_task = ${isRepositoryTask ? "True" : "False"}
+is_repo_owner_profile_task = ${isRepoOwnerProfileTask ? "True" : "False"}
 
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
@@ -225,6 +227,56 @@ def repository_state():
 })()
 """)
 
+def first_repository_rect():
+    return js("""
+(() => {
+  const selectors = [
+    'a[itemprop="name codeRepository"]',
+    '[data-testid="repositories-list"] a[href*="/"]',
+    'li[itemprop="owns"] a[href*="/"]'
+  ];
+  for (const selector of selectors) {
+    const link = Array.from(document.querySelectorAll(selector)).find((item) => {
+      const href = item.getAttribute('href') || '';
+      return /^\\/[^\\/]+\\/[^\\/]+\\/?$/.test(href);
+    });
+    if (link) {
+      const rect = link.getBoundingClientRect();
+      return {
+        x: Math.round(rect.left + rect.width / 2),
+        y: Math.round(rect.top + rect.height / 2),
+        href: link.href,
+        text: (link.textContent || '').trim()
+      };
+    }
+  }
+  return null;
+})()
+""")
+
+def owner_profile_rect():
+    return js("""
+(() => {
+  const path = location.pathname.split('/').filter(Boolean);
+  const owner = path[0];
+  if (!owner || path.length < 2) return null;
+  const link = Array.from(document.querySelectorAll('a[href]')).find((item) => {
+    const href = item.getAttribute('href') || '';
+    const text = (item.textContent || '').trim();
+    return href === '/' + owner || href === '/' + owner + '/' || text === owner;
+  });
+  if (!link) return null;
+  const rect = link.getBoundingClientRect();
+  return {
+    x: Math.round(rect.left + rect.width / 2),
+    y: Math.round(rect.top + rect.height / 2),
+    owner,
+    href: link.href,
+    text: (link.textContent || '').trim()
+  };
+})()
+""")
+
 try:
     emit({"instruction": "Open " + target_url, "status": "running"})
     goto_url(target_url)
@@ -232,7 +284,58 @@ try:
     info = page_info()
     emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
 
-    if is_repository_task:
+    if is_repo_owner_profile_task:
+        state = repository_state()
+        if not state.get("ok"):
+            emit({"instruction": "Open repositories list", "status": "running"})
+            rect = find_repo_tab_rect()
+            if not rect:
+                raise Exception("Could not find the Repositories tab in the preview browser.")
+            click_at_xy(rect["x"], rect["y"])
+            wait_for_load()
+            time.sleep(1)
+            state = repository_state()
+            if not state.get("ok"):
+                raise Exception("Repositories list did not open. Current URL: " + state.get("url", "unknown"))
+            emit({"instruction": "Open repositories list", "status": "done", "result": "Repositories view is active."})
+
+        emit({"instruction": "Open a repository from the list", "status": "running"})
+        repo_rect = first_repository_rect()
+        if not repo_rect:
+            raise Exception("Could not find a repository link in the repositories list.")
+        click_at_xy(repo_rect["x"], repo_rect["y"])
+        wait_for_load()
+        time.sleep(1)
+        repo_info = page_info()
+        emit({
+            "instruction": "Open a repository from the list",
+            "status": "done",
+            "result": "Opened repository " + repo_info.get("url", "")
+        })
+
+        emit({"instruction": "Open the repository owner's profile", "status": "running"})
+        owner_rect = owner_profile_rect()
+        if not owner_rect:
+            raise Exception("Could not find the repository owner profile link from inside the repository.")
+        expected_owner = owner_rect.get("owner", "")
+        click_at_xy(owner_rect["x"], owner_rect["y"])
+        wait_for_load()
+        time.sleep(1)
+        profile_info = page_info()
+        profile_url = profile_info.get("url", "")
+        if "/" + expected_owner not in profile_url or profile_url.rstrip("/").count("/") > 3:
+            raise Exception("Owner profile did not open. Current URL: " + profile_url)
+        emit({
+            "instruction": "Open the repository owner's profile",
+            "status": "done",
+            "result": "Opened owner profile " + profile_url
+        })
+        emit({
+            "final": True,
+            "ok": True,
+            "summary": "From inside a repository, the owner profile link opened the main GitHub profile successfully."
+        })
+    elif is_repository_task:
         emit({"instruction": "Click the Repositories tab", "status": "running"})
         rect = find_repo_tab_rect()
         if not rect:
@@ -630,6 +733,10 @@ function runNextQueuedTask(): void {
 
 function isBrowserHarnessRepositoryTask(task: QaTask): boolean {
   return /repositor(?:y|ies)|repo\s+tab|tab\s+works/i.test(task.name);
+}
+
+function isBrowserHarnessRepoOwnerProfileTask(task: QaTask): boolean {
+  return /within a repo|inside a repo|repo.+profile|profile.+repo|owner.+profile|main profile/i.test(task.name);
 }
 
 function isToolUseResponseError(message: string): boolean {
