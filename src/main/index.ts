@@ -437,6 +437,7 @@ let browserState: BrowserState = {
 
 let runningTaskId: string | null = null;
 let stopTaskFlag = false;
+let taskQueue: string[] = [];
 
 const settingsPath = () =>
   path.join(app.getPath("userData"), "settings.json");
@@ -585,6 +586,45 @@ async function runQaTask(taskId: string): Promise<void> {
     if (runningTaskId === taskId) {
       runningTaskId = null;
     }
+    runNextQueuedTask();
+  }
+}
+
+function enqueueTask(taskId: string): void {
+  if (runningTaskId === taskId || taskQueue.includes(taskId)) return;
+  const task = getTaskById(taskId);
+  if (!task || task.status === "done" || task.status === "failed") return;
+
+  if (!runningTaskId) {
+    startQueuedTask(taskId);
+    return;
+  }
+
+  taskQueue.push(taskId);
+  emitProgress({ type: "task_progress", taskId, message: "Queued behind the running task." });
+}
+
+function startQueuedTask(taskId: string): void {
+  void runQaTask(taskId).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    emitProgress({ type: "task_failed", taskId, message });
+    updateTask(taskId, { status: "failed" });
+    if (runningTaskId === taskId) {
+      runningTaskId = null;
+    }
+    runNextQueuedTask();
+  });
+}
+
+function runNextQueuedTask(): void {
+  if (runningTaskId) return;
+
+  while (taskQueue.length > 0) {
+    const nextTaskId = taskQueue.shift()!;
+    const task = getTaskById(nextTaskId);
+    if (!task || task.status === "done" || task.status === "failed") continue;
+    startQueuedTask(nextTaskId);
+    return;
   }
 }
 
@@ -670,6 +710,7 @@ function registerIpc(): void {
     if (browserView) {
       browserView.webContents.loadURL(input.targetUrl).catch(() => {});
     }
+    enqueueTask(task.id);
     return task;
   });
 
@@ -680,6 +721,7 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("tasks:delete", (_, id: string) => {
+    taskQueue = taskQueue.filter((taskId) => taskId !== id);
     if (runningTaskId === id) {
       stopTaskFlag = true;
       runningTaskId = null;
@@ -688,21 +730,12 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("tasks:start", (_, taskId: string) => {
-    if (runningTaskId && runningTaskId !== taskId) {
-      throw new Error(`Task ${runningTaskId} is already running. Stop it first.`);
-    }
     if (runningTaskId === taskId) return;
-    void runQaTask(taskId).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      emitProgress({ type: "task_failed", taskId, message });
-      updateTask(taskId, { status: "failed" });
-      if (runningTaskId === taskId) {
-        runningTaskId = null;
-      }
-    });
+    enqueueTask(taskId);
   });
 
   ipcMain.handle("tasks:stop", (_, taskId: string) => {
+    taskQueue = taskQueue.filter((queuedTaskId) => queuedTaskId !== taskId);
     if (runningTaskId === taskId) {
       stopTaskFlag = true;
     }
