@@ -813,6 +813,11 @@ function createBrowserView(): void {
     browserState = { ...browserState, url };
     sendBrowserState();
   });
+
+  browserView.webContents.setWindowOpenHandler((details) => {
+    void browserView?.webContents.loadURL(details.url);
+    return { action: "deny" };
+  });
 }
 
 function attachBrowserViewToMain(): void {
@@ -871,6 +876,10 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return { action: "deny" };
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
