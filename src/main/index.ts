@@ -289,7 +289,16 @@ async function runDirectBrowserCheck(task: QaTask): Promise<boolean> {
 
     const currentUrl = page.url();
     const repositoriesSelected = /[?&]tab=repositories\b/i.test(currentUrl) ||
-      await page.locator('a[href*="tab=repositories"][aria-current="page"]').count().then((count) => count > 0);
+      await page.locator('a[href*="tab=repositories"][aria-current="page"]').count().then((count) => count > 0) ||
+      await page.getByRole("link", { name: /repositories?/i }).first().evaluate((element) => {
+        const link = element as HTMLAnchorElement;
+        return link.getAttribute("aria-current") === "page" ||
+          link.classList.contains("selected") ||
+          link.parentElement?.classList.contains("selected") ||
+          window.getComputedStyle(link).fontWeight === "600";
+      }).catch(() => false) ||
+      await page.getByPlaceholder(/find a repository/i).count().then((count) => count > 0) ||
+      await page.locator('[data-testid="repositories-list"], [itemprop="owns"], a[itemprop="name codeRepository"]').count().then((count) => count > 0);
 
     if (!repositoriesSelected) {
       throw new Error(`Repositories tab did not become active. Current URL: ${currentUrl}`);
