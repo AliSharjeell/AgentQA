@@ -648,7 +648,7 @@ function SettingsPanel(): JSX.Element {
         `${baseUrl}/v1/models`,
         "GET",
         { Authorization: `Bearer ${settings.apiKey}` },
-        ""
+        undefined as unknown as string
       );
       setTestResult({ ok: res.ok, message: res.ok ? `API connected (${res.status})` : `Error: ${res.body}` });
     } catch (e) {

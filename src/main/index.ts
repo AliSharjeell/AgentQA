@@ -486,7 +486,11 @@ function registerIpc(): void {
 
   ipcMain.handle("testApiConnection", async (_, url, method, headers, body) => {
     try {
-      const res = await fetch(url, { method, headers, body });
+      const res = await fetch(url, {
+        method,
+        headers,
+        ...(body && method !== "GET" && method !== "HEAD" ? { body } : {})
+      });
       return { ok: res.ok, status: res.status, body: await res.text() };
     } catch (err) {
       return { ok: false, status: 0, body: String(err) };
