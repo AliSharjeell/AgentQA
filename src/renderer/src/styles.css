@@ -131,12 +131,10 @@ textarea {
 
   .mica-sidebar {
     background: rgba(9, 9, 11, 0.18);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
   }
 
   .mica-topbar {
     background: rgba(9, 9, 11, 0.18);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
   .lead-table {

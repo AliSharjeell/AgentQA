@@ -199,7 +199,7 @@ export default function App(): JSX.Element {
           </div>
 
           {/* Browser preview area */}
-          <div className="absolute left-0 right-0 bottom-0 top-12 bg-zinc-950">
+          <div className="absolute left-0 right-0 bottom-0 top-12 bg-zinc-950 rounded-tl-2xl border-t border-l border-white/10 overflow-hidden">
             <BrowserPreview browserState={browserState} />
           </div>
         </div>
