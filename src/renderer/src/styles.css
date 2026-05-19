@@ -130,11 +130,7 @@ textarea {
   }
 
   .mica-sidebar {
-    background: rgba(9, 9, 11, 0.58);
-    border-right: 1px solid rgba(255, 255, 255, 0.07);
-    border-top-right-radius: 18px;
-    backdrop-filter: blur(28px) saturate(1.35);
-    -webkit-backdrop-filter: blur(28px) saturate(1.35);
+    background: transparent;
   }
 
   .mica-topbar {
