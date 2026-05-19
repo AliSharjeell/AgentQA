@@ -185,6 +185,7 @@ export default function App(): JSX.Element {
               onSelectTask={setActiveTaskId}
               onRefresh={() => window.qaApi?.listTasks().then(setTasks)}
               setTasks={setTasks}
+              browserUrl={browserState.url}
             />
           )}
 
@@ -256,20 +257,15 @@ interface TaskPanelProps {
   activeTaskId: string | null;
   onSelectTask: (id: string | null) => void;
   onRefresh: () => void;
+  setTasks: React.Dispatch<React.SetStateAction<QaTask[]>>;
+  browserUrl: string;
 }
 
-function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks }: TaskPanelProps & { setTasks: React.Dispatch<React.SetStateAction<QaTask[]>> }): JSX.Element {
+function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, browserUrl }: TaskPanelProps): JSX.Element {
   const [inputName, setInputName] = useState("");
   const [inputUrl, setInputUrl] = useState("");
   const [showUrlField, setShowUrlField] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [browserUrl, setBrowserUrl] = useState("");
-
-  useEffect(() => {
-    if (window.qaApi) {
-      void window.qaApi.getBrowserState().then((s) => setBrowserUrl(s.url));
-    }
-  }, []);
 
   const handleCreateTask = useCallback(async () => {
     if (!inputName.trim() || !window.qaApi) return;
