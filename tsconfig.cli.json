@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "outDir": "./out/cli",
+    "rootDir": "./src",
+    "declaration": false,
+    "noEmit": true
+  },
+  "include": [
+    "src/core/**/*.ts",
+    "src/cli/**/*.ts",
+    "src/shared/**/*.ts"
+  ],
+  "exclude": [
+    "src/main/**",
+    "src/preload/**",
+    "src/renderer/**",
+    "node_modules"
+  ]
+}

@@ -15,7 +15,6 @@
  * - IPC channel names: colon-separated (e.g., "tasks:list", "browser:navigate")
  * - Event names: past-tense noun (e.g., "task:progress", "browser:urlChanged")
  */
-import type { Browser } from "browser-use";
 
 // ─── Core Primitives ───────────────────────────────────────────────────────
 
