@@ -88,11 +88,7 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
   try {
     emitProgress({ type: "task_progress", taskId: task.id, message: "Running browser-harness in preview..." });
     const settings = loadSettings();
-    const harnessScript = settings.apiKey
-      ? await generateBrowserHarnessScript(task, settings)
-      : buildGenericBrowserHarnessScript(task);
-
-    const harnessResult = await runBrowserHarnessScript(harnessScript, (event) => {
+    const harnessResult = await runBrowserHarnessAgent(task, settings, (event) => {
       if (event.status === "running") {
         addStep(event.instruction, "running");
         return;
@@ -175,12 +171,65 @@ type HarnessCheckResult = {
   error?: string;
 };
 
-async function generateBrowserHarnessScript(task: QaTask, settings: AppSettings): Promise<string> {
+async function runBrowserHarnessAgent(
+  task: QaTask,
+  settings: AppSettings,
+  onStep: (event: HarnessStepEvent) => void
+): Promise<HarnessCheckResult> {
+  const observation = await runBrowserHarnessScript(buildObservationBrowserHarnessScript(task), onStep);
+
+  if (!settings.apiKey) {
+    return {
+      ok: false,
+      summary: "Browser-harness inspected the page, but no model is configured to decide actions.",
+      error: "Save an API key in Settings so the QA agent can reason over the DOM snapshot and generate actions."
+    };
+  }
+
+  let previousFailure = observation.ok ? "" : observation.error ?? observation.summary;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    onStep({ instruction: `Plan browser actions with model (attempt ${attempt})`, status: "running" });
+    const harnessScript = await generateBrowserHarnessScript(task, settings, observation.summary, previousFailure, attempt);
+    onStep({ instruction: `Plan browser actions with model (attempt ${attempt})`, status: "done", result: "Generated browser-harness action script." });
+    const result = await runBrowserHarnessScript(harnessScript, onStep);
+
+    if (result.ok) {
+      return result;
+    }
+
+    previousFailure = [
+      previousFailure,
+      `Attempt ${attempt} failed: ${result.error ?? result.summary}`
+    ].filter(Boolean).join("\n");
+  }
+
+  return {
+    ok: false,
+    summary: "Browser-harness could not complete the task after inspecting and retrying.",
+    error: previousFailure || "No successful action sequence was produced."
+  };
+}
+
+async function generateBrowserHarnessScript(
+  task: QaTask,
+  settings: AppSettings,
+  observation: string,
+  previousFailure: string,
+  attempt: number
+): Promise<string> {
   const prompt = `You are generating Python code for browser-harness, a CDP browser automation harness.
 The code will be piped directly to the browser-harness CLI and will control the already-visible live preview browser.
 
 Task: ${task.name}
 Target URL: ${task.targetUrl}
+Attempt: ${attempt} of 3
+
+Current browser/DOM observation:
+${observation}
+
+Previous failure or retry context:
+${previousFailure || "None"}
 
 Available helper functions include:
 - goto_url(url)
@@ -199,8 +248,12 @@ def emit(payload):
 - Emit steps with {"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."}.
 - Emit exactly one final event: {"final": True, "ok": bool, "summary": "...", "error": "..."}.
 - Start by opening the target URL.
-- Prefer DOM inspection via js(...) and click_at_xy(...) for browser actions.
-- If the task cannot be fully verified, return ok=False with a clear error.
+- Inspect DOM state with js(...) before acting.
+- Choose actions from observed DOM and page state. Do not assume this is GitHub-specific.
+- Use click_at_xy(...) for clicks and type_text(...) for typing.
+- After each action, wait_for_load() or verify DOM/URL changes with js(...) and page_info().
+- If an action fails, try one alternate reasonable selector/coordinate before final failure.
+- If the task cannot be fully verified, return ok=False with a clear error and what was observed.
 `;
 
   try {
@@ -265,6 +318,57 @@ function normalizeHarnessScript(script: string): string {
   return fenceMatch ? fenceMatch[1].trim() : trimmed;
 }
 
+function buildObservationBrowserHarnessScript(task: QaTask): string {
+  return `
+import json
+
+target_url = ${JSON.stringify(task.targetUrl)}
+
+def emit(payload):
+    print("BH_EVENT " + json.dumps(payload), flush=True)
+
+try:
+    emit({"instruction": "Open " + target_url, "status": "running"})
+    goto_url(target_url)
+    wait_for_load()
+    info = page_info()
+    emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
+
+    emit({"instruction": "Inspect DOM with browser-harness", "status": "running"})
+    elements = js("""(() => {
+      const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[role="button"],[role="link"],[tabindex]'));
+      return nodes.slice(0, 120).map((el, index) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || '').trim();
+        return {
+          index,
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute('role') || '',
+          text: text.slice(0, 140),
+          href: el.href || '',
+          name: el.getAttribute('name') || '',
+          id: el.id || '',
+          classes: String(el.className || '').slice(0, 120),
+          visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
+          x: Math.round(rect.left + rect.width / 2),
+          y: Math.round(rect.top + rect.height / 2)
+        };
+      });
+    })()""")
+    observation = {
+        "taskUrl": target_url,
+        "page": info,
+        "interactiveElements": elements
+    }
+    emit({"instruction": "Inspect DOM with browser-harness", "status": "done", "result": json.dumps(observation)[:3500]})
+    emit({"final": True, "ok": True, "summary": json.dumps(observation)})
+except Exception as exc:
+    emit({"instruction": "Inspect DOM with browser-harness", "status": "failed", "error": str(exc)})
+    emit({"final": True, "ok": False, "summary": "DOM inspection failed.", "error": str(exc)})
+`;
+}
+
 function buildGenericBrowserHarnessScript(task: QaTask, note?: string): string {
   return `
 import json
@@ -314,10 +418,10 @@ function runBrowserHarnessScript(
   script: string,
   onStep: (event: HarnessStepEvent) => void
 ): Promise<HarnessCheckResult> {
-
   return new Promise((resolve) => {
-    const child = spawn("browser-harness", {
-      shell: true,
+    const command = resolveBrowserHarnessCommand();
+    const child = spawn(command, [], {
+      shell: false,
       env: {
         ...process.env,
         BU_CDP_URL: `http://127.0.0.1:${PREVIEW_DEBUG_PORT}`
@@ -327,7 +431,25 @@ function runBrowserHarnessScript(
 
     let finalResult: HarnessCheckResult | null = null;
     let stderr = "";
+    let stdout = "";
     let stdoutBuffer = "";
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish({
+        ok: false,
+        summary: "Browser-harness timed out.",
+        error: "The harness process did not return a final result within 120 seconds."
+      });
+    }, 120000);
+
+    const finish = (result: HarnessCheckResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
 
     const handleLine = (line: string): void => {
       if (!line.startsWith("BH_EVENT ")) return;
@@ -356,7 +478,9 @@ function runBrowserHarnessScript(
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
+      const text = chunk.toString("utf8");
+      stdout += text;
+      stdoutBuffer += text;
       const lines = stdoutBuffer.split(/\r?\n/);
       stdoutBuffer = lines.pop() ?? "";
       for (const line of lines) {
@@ -369,7 +493,7 @@ function runBrowserHarnessScript(
     });
 
     child.on("error", (error) => {
-      resolve({
+      finish({
         ok: false,
         summary: "Browser-harness could not be started.",
         error: `${error.message}. Install it with: uv tool install git+https://github.com/browser-use/browser-harness`
@@ -377,24 +501,43 @@ function runBrowserHarnessScript(
     });
 
     child.on("close", (code) => {
+      if (settled) return;
       if (stdoutBuffer.trim()) {
         handleLine(stdoutBuffer.trim());
       }
 
       if (finalResult) {
-        resolve(finalResult);
+        finish(finalResult);
         return;
       }
 
-      resolve({
+      const visibleOutput = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n").trim();
+      finish({
         ok: false,
         summary: "Browser-harness exited without a result.",
-        error: stderr.trim() || `browser-harness exited with code ${code ?? "unknown"}`
+        error: visibleOutput || `browser-harness exited with code ${code ?? "unknown"}`
       });
     });
 
-    child.stdin.end(script);
+    child.stdin.write(script);
+    child.stdin.end();
   });
+}
+
+function resolveBrowserHarnessCommand(): string {
+  if (process.env.BROWSER_HARNESS_PATH && fs.existsSync(process.env.BROWSER_HARNESS_PATH)) {
+    return process.env.BROWSER_HARNESS_PATH;
+  }
+
+  const userProfile = process.env.USERPROFILE;
+  if (userProfile) {
+    const uvToolPath = path.join(userProfile, ".local", "bin", "browser-harness.exe");
+    if (fs.existsSync(uvToolPath)) {
+      return uvToolPath;
+    }
+  }
+
+  return "browser-harness";
 }
 
 async function getPreviewAutomationTarget(
