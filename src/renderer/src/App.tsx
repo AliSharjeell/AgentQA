@@ -150,8 +150,8 @@ export default function App(): JSX.Element {
         {/* ── Main Area ── */}
         <div className="main-area relative min-w-0 flex-1 overflow-hidden">
           {/* Browser toolbar strip */}
-          <div className="window-no-drag fixed left-72 right-0 top-0 z-10 flex h-12 items-center gap-3 mica-topbar px-4">
-            <div className="flex items-center gap-1">
+          <div className="window-drag fixed left-72 right-0 top-0 z-10 flex h-12 items-center gap-3 mica-topbar px-4">
+            <div className="window-no-drag flex items-center gap-1">
               <button
                 className="browser-nav-btn"
                 onClick={() => window.qaApi?.goBack()}
@@ -176,7 +176,7 @@ export default function App(): JSX.Element {
             </div>
 
             {/* URL input */}
-            <div className="relative flex-1 max-w-2xl mx-auto">
+            <div className="window-no-drag relative flex-1 max-w-2xl mx-auto">
               <input
                 className="browser-url-input"
                 placeholder="Enter URL or search..."
