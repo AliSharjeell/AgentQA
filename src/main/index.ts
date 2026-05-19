@@ -229,20 +229,26 @@ async function runBrowserHarnessAgent(
     const view = browserView;
 
     onStep({ instruction: `Open ${task.targetUrl}`, status: "running" });
-    await view.webContents.loadURL(task.targetUrl).catch(() => {});
-    
-    // Wait for page to finish loading
-    if (view.webContents.isLoading()) {
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          view.webContents.once('did-stop-loading', () => resolve());
-        }),
-        new Promise<void>((resolve) => setTimeout(resolve, 4000))
-      ]);
+
+    // Skip reload if the preview is already on the target URL
+    const currentUrl = view.webContents.getURL();
+    const alreadyThere = currentUrl && new URL(currentUrl).origin === new URL(task.targetUrl).origin
+      && new URL(currentUrl).pathname === new URL(task.targetUrl).pathname;
+
+    if (!alreadyThere) {
+      await view.webContents.loadURL(task.targetUrl).catch(() => {});
+
+      if (view.webContents.isLoading()) {
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            view.webContents.once('did-stop-loading', () => resolve());
+          }),
+          new Promise<void>((resolve) => setTimeout(resolve, 4000))
+        ]);
+      }
+
+      await new Promise((r) => setTimeout(r, 500));
     }
-    
-    // Let page settle briefly
-    await new Promise((r) => setTimeout(r, 500));
 
     const url = view.webContents.getURL();
     const title = view.webContents.getTitle();
