@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+.vite/
+*.log
+profiles/
+jobagent.sqlite
+jobagent.sqlite-*
+lead-scrapper.sqlite
+lead-scrapper.sqlite-*
+lead-scrapper-store.json
+outreach-store.json
