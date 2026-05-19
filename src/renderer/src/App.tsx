@@ -99,7 +99,7 @@ export default function App(): JSX.Element {
     <main className="app-shell min-h-screen text-zinc-100">
       <div className="flex min-h-screen">
         {/* ── Sidebar ── */}
-        <aside className="mica-sidebar window-drag sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden border-r border-white/8 px-4 py-4">
+        <aside className="mica-sidebar window-drag sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden px-4 py-4">
           <div className="flex items-center py-1.5">
             <h1 className="text-sm font-semibold text-white tracking-wide">QA Automation AI</h1>
           </div>
