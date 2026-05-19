@@ -48,6 +48,7 @@ import type {
   QaTaskInput,
   QaTaskUpdate,
   QaReport,
+  TaskStatus,
   TaskStepStatus
 } from "../shared/types";
 import {
@@ -255,10 +256,11 @@ async function runQaTask(taskId: string): Promise<void> {
       browserView.webContents.once("did-finish-load", () => {
         emitProgress({ type: "task_progress", taskId, message: "Page loaded. Executing steps..." });
       });
-      browserView.webContents.loadURL(task.targetUrl, {
-        waitUntil,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (browserView.webContents as any).loadURL(task.targetUrl, {
+        waitUntil: waitUntil ?? "domcontentloaded",
         timeout: 30000
-      }).catch((err) => {
+      } as Record<string, unknown>).catch((err: Error) => {
         emitProgress({ type: "task_failed", taskId, message: `Navigation failed: ${err.message}` });
       });
       // Wait a moment for navigation to initiate
@@ -496,10 +498,11 @@ function registerIpc(): void {
 
   ipcMain.handle("browser:navigate", async (_, input: NavigateInput) => {
     if (!browserView) return;
-    await browserView.webContents.loadURL(input.url, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (browserView.webContents as any).loadURL(input.url, {
       waitUntil: input.waitUntil ?? "domcontentloaded",
       timeout: 30000
-    });
+    } as Record<string, unknown>);
   });
 
   ipcMain.handle("browser:refresh", () => {
