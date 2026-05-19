@@ -275,38 +275,11 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
 
   return (
     <div className="mt-4 flex flex-1 flex-col overflow-hidden">
-      {/* New task input */}
-      <div className="space-y-2">
-        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider select-none">New Task</span>
-        <input
-          className={`input w-full${urlError ? " border-red-500/50" : ""}`}
-          placeholder='e.g. "Test the login page"'
-          value={inputName}
-          onChange={(e) => { setInputName(e.target.value); setUrlError(""); setShowUrlHint(false); }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleCreateTask(); }
-          }}
-        />
-        {urlError && (
-          <p className="text-[10px] text-red-400">{urlError}</p>
-        )}
-        <button
-          className="primary-button w-full"
-          onClick={() => void handleCreateTask()}
-          disabled={creating || !inputName.trim()}
-        >
-          <Plus size={13} />
-          {creating ? "Creating..." : "Create Task"}
-        </button>
-      </div>
-
-      <div className="border-t border-white/5 my-4" />
-
       {/* Task list */}
-      <div className="flex-1 space-y-1.5 overflow-y-auto">
+      <div className="flex-1 space-y-1.5 overflow-y-auto pr-1">
         {tasks.length === 0 ? (
           <div className="py-8 text-center text-xs text-zinc-600">
-            No tasks yet. Create one above.
+            No tasks yet. Create one below.
           </div>
         ) : (
           tasks.map((task) => (
@@ -326,6 +299,35 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
               }}
             />
           ))
+        )}
+      </div>
+
+      {/* New task chat-style input (pinned to bottom) */}
+      <div className="mt-auto pt-3 border-t border-white/5 space-y-1.5">
+        <div className="relative flex items-center">
+          <input
+            className={`h-9 w-full rounded-full border border-white/10 bg-zinc-950/40 pl-4 pr-10 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none transition-all duration-200 focus:border-indigo-500/40 focus:bg-zinc-950/70 focus:ring-2 focus:ring-indigo-500/10${urlError ? " border-red-500/50" : ""}`}
+            placeholder='Ask AI to test something...'
+            value={inputName}
+            onChange={(e) => { setInputName(e.target.value); setUrlError(""); setShowUrlHint(false); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void handleCreateTask();
+              }
+            }}
+          />
+          <button
+            className="absolute right-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-white text-zinc-950 hover:bg-zinc-200 transition duration-150 active:scale-90 disabled:opacity-40 disabled:pointer-events-none"
+            onClick={() => void handleCreateTask()}
+            disabled={creating || !inputName.trim()}
+            title="Create Task"
+          >
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        {urlError && (
+          <p className="text-[10px] text-red-400 px-2">{urlError}</p>
         )}
       </div>
     </div>
