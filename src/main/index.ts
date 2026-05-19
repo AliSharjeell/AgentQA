@@ -90,21 +90,52 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
     const settings = loadSettings();
     const harnessResult = await runBrowserHarnessAgent(task, settings, (event) => {
       if (event.status === "running") {
-        addStep(event.instruction, "running");
+        // Auto-complete any previous running step
+        const lastStep = steps[steps.length - 1];
+        if (lastStep && lastStep.status === "running" && lastStep.instruction !== event.instruction) {
+          lastStep.status = "done";
+          lastStep.timestamp = new Date().toISOString();
+        }
+
+        // Check if a step with this instruction already exists in running state
+        const existing = steps.find(s => s.instruction === event.instruction && s.status === "running");
+        if (!existing) {
+          addStep(event.instruction, "running");
+        }
         return;
       }
 
-      const step = steps[steps.length - 1];
-      if (step && step.status === "running") {
-        step.status = event.status;
-        step.result = event.result;
-        step.error = event.error;
-        step.timestamp = new Date().toISOString();
+      // Find the step with the matching instruction (search backwards)
+      const matchingStep = [...steps].reverse().find(s => s.instruction === event.instruction);
+      if (matchingStep) {
+        matchingStep.status = event.status;
+        matchingStep.result = event.result;
+        matchingStep.error = event.error;
+        matchingStep.timestamp = new Date().toISOString();
         setTaskSteps(task.id, [...steps]);
       } else {
-        addStep(event.instruction, event.status, event.result, event.error);
+        // Fallback: update the last step if it is running
+        const lastStep = steps[steps.length - 1];
+        if (lastStep && lastStep.status === "running") {
+          lastStep.status = event.status;
+          lastStep.result = event.result;
+          lastStep.error = event.error;
+          lastStep.timestamp = new Date().toISOString();
+          setTaskSteps(task.id, [...steps]);
+        } else {
+          addStep(event.instruction, event.status, event.result, event.error);
+        }
       }
     });
+
+    // Clean up any remaining running steps to done
+    for (const step of steps) {
+      if (step.status === "running") {
+        step.status = "done";
+        step.timestamp = new Date().toISOString();
+      }
+    }
+    setTaskSteps(task.id, [...steps]);
 
     if (!harnessResult.ok) {
       throw new Error(harnessResult.error);
@@ -143,7 +174,7 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
     return true;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const runningStep = steps.find((step) => step.status === "running");
+    const runningStep = [...steps].reverse().find((step) => step.status === "running");
     if (runningStep) {
       runningStep.status = "failed";
       runningStep.error = message;
@@ -151,6 +182,15 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
     } else {
       addStep("Run browser check", "failed", undefined, message);
     }
+
+    // Clean up all other running steps to done
+    for (const step of steps) {
+      if (step.status === "running") {
+        step.status = "done";
+        step.timestamp = new Date().toISOString();
+      }
+    }
+
     setTaskSteps(task.id, [...steps]);
     emitProgress({ type: "task_failed", taskId: task.id, message });
     updateTask(task.id, { status: "failed" });
