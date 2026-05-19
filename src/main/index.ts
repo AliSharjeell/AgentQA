@@ -13,11 +13,11 @@
  *
  * ## Browser-Use Integration
  *
- * BrowserAgent wraps browser-use to:
- * - Manage a Playwright browser instance
- * - Emit browser state changes to the renderer
- * - Run QA tasks through AI-driven step execution
- * - Capture screenshots and results
+ * QA Agent (browser-use) runs in its own Playwright browser instance:
+ * - Each task gets a fresh headless/headed Chromium browser
+ * - Agent uses AI (Claude/OpenAI) to plan and execute steps
+ * - Screenshots captured per step and saved to userData/screenshots/
+ * - Progress emitted to renderer via IPC events
  *
  * ## Data Storage
  *
@@ -37,7 +37,6 @@ import {
   shell,
   session
 } from "electron";
-import type { WebContentsView } from "electron";
 import type {
   AppSettings,
   AppStatus,
@@ -64,13 +63,218 @@ import {
   generateId
 } from "./db/qaTaskRepo";
 
-// ─── Window References ──────────────────────────────────────────────────────
+// ─── Browser-Use Agent ───────────────────────────────────────────────────────
+
+type BrowserUseAgent = import("browser-use").Agent;
+
+async function runQaTaskWithAgent(task: QaTask, settings: AppSettings): Promise<void> {
+  const { Agent, Browser, ChatAnthropic, ChatOpenAI } = await import("browser-use");
+
+  // Build LLM from settings
+  let llm: InstanceType<typeof ChatAnthropic> | InstanceType<typeof ChatOpenAI>;
+  if (settings.apiProvider === "openai") {
+    llm = new ChatOpenAI({
+      model: settings.model || "gpt-4o",
+      apiKey: settings.apiKey,
+      ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {})
+    });
+  } else {
+    llm = new ChatAnthropic({
+      model: settings.model || "claude-sonnet-4-20250514",
+      apiKey: settings.apiKey,
+      ...(settings.apiBaseUrl ? { baseURL: settings.apiBaseUrl } : {})
+    });
+  }
+
+  const screenshotDir = path.join(app.getPath("userData"), "screenshots");
+  fs.mkdirSync(screenshotDir, { recursive: true });
+
+  const steps: {
+    id: string;
+    order: number;
+    instruction: string;
+    status: TaskStepStatus;
+    timestamp: string;
+    result?: string;
+    screenshotPath?: string;
+    error?: string;
+  }[] = [];
+
+  let stepCount = 0;
+  let browser: Browser | null = null;
+
+  try {
+    // Create browser and page
+    browser = new Browser({ headless: false });
+    const context = await browser.newContext({
+      acceptDownloads: true,
+      viewport: { width: 1280, height: 800 }
+    });
+    const page = await context.newPage();
+
+    // Create agent
+    const agent = new Agent({
+      task: task.name,
+      llm,
+      page,
+      max_failures: 3,
+      use_thinking: true,
+      use_judge: false, // simplify for now
+      enable_planning: true,
+      step_timeout: 120,
+      directly_open_url: true,
+      // Step callback — fires after each AI action
+      register_new_step_callback: ({ step_info }) => {
+        stepCount += 1;
+        const stepId = generateId();
+        const stepName = step_info?.step_name ?? `Step ${stepCount}`;
+        const step: typeof steps[number] = {
+          id: stepId,
+          order: stepCount,
+          instruction: stepName,
+          status: "running",
+          timestamp: new Date().toISOString()
+        };
+        steps.push(step);
+        setTaskSteps(task.id, steps);
+        emitProgress({
+          type: "step_complete",
+          taskId: task.id,
+          stepId,
+          message: stepName
+        });
+      },
+      // Done callback — fires when agent completes
+      register_done_callback: ({ result }) => {
+        const lastStep = steps[steps.length - 1];
+        if (lastStep && lastStep.status === "running") {
+          lastStep.status = "done";
+          lastStep.result = result ?? "Task completed";
+          lastStep.timestamp = new Date().toISOString();
+        }
+        // Take final screenshot
+        void capturePageScreenshot(page, screenshotDir).then((sp) => {
+          if (sp) {
+            if (lastStep) lastStep.screenshotPath = sp;
+            setTaskSteps(task.id, [...steps]);
+          }
+        });
+      },
+      // Should stop callback — check stopTaskFlag
+      register_should_stop_callback: () => {
+        return stopTaskFlag;
+      }
+    });
+
+    // Navigate to target URL before running agent
+    await page.goto(task.targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+    emitProgress({ type: "task_progress", taskId: task.id, message: `Navigated to ${task.targetUrl}. Starting AI agent...` });
+
+    // Set initial step
+    const firstStepId = generateId();
+    steps.push({
+      id: firstStepId,
+      order: 1,
+      instruction: `Navigate to ${task.targetUrl} and ${task.name}`,
+      status: "done",
+      timestamp: new Date().toISOString(),
+      result: `Loaded ${task.targetUrl}`
+    });
+    stepCount = 1;
+    setTaskSteps(task.id, steps);
+
+    // Run agent
+    emitProgress({ type: "task_progress", taskId: task.id, message: "AI agent is analyzing the page..." });
+    const result = await agent.run();
+
+    // Finalize steps
+    for (const step of steps) {
+      if (step.status === "running") {
+        step.status = "done";
+        step.result = result ?? "Completed";
+        step.timestamp = new Date().toISOString();
+      }
+    }
+    setTaskSteps(task.id, [...steps]);
+
+    // Capture final screenshot
+    const finalScreenshot = await capturePageScreenshot(page, screenshotDir);
+
+    // Build report
+    const endTime = new Date().toISOString();
+    const startTime = task.createdAt;
+    const passed = steps.filter((s) => s.status === "done").length;
+    const failed = steps.filter((s) => s.status === "failed").length;
+
+    const report: QaReport = {
+      taskId: task.id,
+      taskName: task.name,
+      targetUrl: task.targetUrl,
+      overallStatus: failed === 0 ? "pass" : passed === 0 ? "fail" : "partial",
+      summary: `AI agent completed ${passed}/${steps.length} steps. ${failed} step(s) failed.`,
+      totalSteps: steps.length,
+      passedSteps: passed,
+      failedSteps: failed,
+      skippedSteps: 0,
+      startTime,
+      endTime,
+      durationMs: new Date(endTime).getTime() - new Date(startTime).getTime(),
+      steps: steps.map((s) => ({
+        instruction: s.instruction,
+        status: s.status,
+        result: s.result ?? "",
+        screenshotPath: s.screenshotPath,
+        duration: 0,
+        error: s.error
+      })),
+      screenshots: steps.flatMap((s) => (s.screenshotPath ? [s.screenshotPath] : [])),
+      aiReasoning: result ?? "Executed by browser-use AI agent."
+    };
+
+    attachReport(task.id, report);
+    updateTask(task.id, { status: failed === 0 ? "done" : "partial" });
+    emitProgress({ type: "task_complete", taskId: task.id, data: report });
+
+    await browser.close();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    emitProgress({ type: "task_failed", taskId: task.id, message });
+    updateTask(task.id, { status: "failed" });
+    // Mark any running step as failed
+    for (const step of steps) {
+      if (step.status === "running") {
+        step.status = "failed";
+        step.error = message;
+        step.timestamp = new Date().toISOString();
+      }
+    }
+    setTaskSteps(task.id, [...steps]);
+    if (browser) {
+      try { await browser.close(); } catch { /* ignore */ }
+    }
+  }
+}
+
+async function capturePageScreenshot(
+  page: import("playwright").Page,
+  screenshotDir: string
+): Promise<string | undefined> {
+  try {
+    const filename = `screenshot-${Date.now()}.png`;
+    const filePath = path.join(screenshotDir, filename);
+    await page.screenshot({ path: filePath, fullPage: false });
+    return filePath;
+  } catch {
+    return undefined;
+  }
+}
+
+// ─── Window References ────────────────────────────────────────────────────────
 
 let mainWindow: BrowserWindow | null = null;
 let browserView: BrowserView | null = null;
-let browserViewEmbed: WebContentsView | null = null;
 
-// ─── Browser State ──────────────────────────────────────────────────────────
+// ─── Browser State ─────────────────────────────────────────────────────────
 
 let browserState: BrowserState = {
   url: "",
@@ -83,7 +287,6 @@ let browserState: BrowserState = {
 
 let runningTaskId: string | null = null;
 let stopTaskFlag = false;
-let pauseTaskFlag = false;
 
 const settingsPath = () =>
   path.join(app.getPath("userData"), "settings.json");
@@ -131,11 +334,7 @@ function createBrowserView(): void {
   });
 
   browserView.webContents.on("did-fail-load", (_, errorCode, errorDescription) => {
-    browserState = {
-      ...browserState,
-      ready: false,
-      message: `Load failed: ${errorDescription} (${errorCode})`
-    };
+    browserState = { ...browserState, ready: false, message: `Load failed: ${errorDescription} (${errorCode})` };
     sendBrowserState();
   });
 
@@ -160,7 +359,7 @@ function attachBrowserViewToMain(): void {
 function resizeBrowserView(): void {
   if (!mainWindow || !browserView) return;
   const [winW, winH] = mainWindow.getContentSize();
-  const sidebarW = 320;
+  const sidebarW = 288;
   const titleH = 48;
   browserView.setBounds({
     x: sidebarW,
@@ -192,7 +391,6 @@ function createWindow(): void {
     },
     backgroundColor: "#09090b",
     backgroundMaterial: process.platform === "win32" ? "mica" : undefined,
-    transparent: false,
     roundedCorners: true,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.mjs"),
@@ -222,7 +420,6 @@ async function runQaTask(taskId: string): Promise<void> {
 
   runningTaskId = taskId;
   stopTaskFlag = false;
-  pauseTaskFlag = false;
 
   const settings = loadSettings();
   if (!settings.apiKey) {
@@ -233,223 +430,11 @@ async function runQaTask(taskId: string): Promise<void> {
   }
 
   updateTask(taskId, { status: "running" });
-  emitProgress({ type: "task_progress", taskId, message: "Starting QA task..." });
+  emitProgress({ type: "task_progress", taskId, message: "Starting QA task with AI agent..." });
 
-  const startTime = new Date().toISOString();
-
-  try {
-    // Generate AI plan using browser-use Agent
-    const steps = await generateTaskSteps(task, settings);
-    setTaskSteps(taskId, steps);
-
-    // Navigate to target URL first
-    emitProgress({ type: "task_progress", taskId, message: `Navigating to ${task.targetUrl}...` });
-    if (browserView) {
-      const waitUntil: NavigateInput["waitUntil"] = "domcontentloaded";
-      browserView.webContents.once("did-finish-load", () => {
-        emitProgress({ type: "task_progress", taskId, message: "Page loaded. Executing steps..." });
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (browserView.webContents as any).loadURL(task.targetUrl, {
-        waitUntil: waitUntil ?? "domcontentloaded",
-        timeout: 30000
-      } as Record<string, unknown>).catch((err: Error) => {
-        emitProgress({ type: "task_failed", taskId, message: `Navigation failed: ${err.message}` });
-      });
-      // Wait a moment for navigation to initiate
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    // Execute each step
-    let passed = 0;
-    let failed = 0;
-    let skipped = 0;
-
-    for (const step of steps) {
-      if (stopTaskFlag) {
-        updateTask(taskId, { status: "todo" });
-        emitProgress({ type: "task_progress", taskId, message: "Task stopped by user." });
-        runningTaskId = null;
-        return;
-      }
-
-      while (pauseTaskFlag) {
-        await new Promise((r) => setTimeout(r, 500));
-        if (stopTaskFlag) {
-          updateTask(taskId, { status: "todo" });
-          runningTaskId = null;
-          return;
-        }
-      }
-
-      updateStepStatus(taskId, step.id, "running");
-      emitProgress({ type: "step_complete", taskId, stepId: step.id, message: step.instruction });
-
-      try {
-        const result = await executeStep(browserView, step, task, settings);
-        updateStepStatus(taskId, step.id, "done", result.message, result.screenshotPath);
-        if (result.screenshotPath) {
-          emitProgress({ type: "step_complete", taskId, stepId: step.id, data: { screenshot: result.screenshotPath } });
-        } else {
-          emitProgress({ type: "step_complete", taskId, stepId: step.id, message: result.message });
-        }
-        passed += 1;
-      } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
-        updateStepStatus(taskId, step.id, "failed", undefined, undefined, error);
-        emitProgress({ type: "step_complete", taskId, stepId: step.id, message: `Failed: ${error}` });
-        failed += 1;
-        // Continue to next step on failure (partial pass)
-      }
-    }
-
-    // Build report
-    const endTime = new Date().toISOString();
-    const finalTask = getTaskById(taskId);
-    const report: QaReport = {
-      taskId,
-      taskName: task.name,
-      targetUrl: task.targetUrl,
-      overallStatus: failed === 0 ? "pass" : passed === 0 ? "fail" : "partial",
-      summary: `Completed ${passed}/${steps.length} steps successfully. ${failed} step(s) failed.`,
-      totalSteps: steps.length,
-      passedSteps: passed,
-      failedSteps: failed,
-      skippedSteps: skipped,
-      startTime,
-      endTime,
-      durationMs: new Date(endTime).getTime() - new Date(startTime).getTime(),
-      steps: finalTask?.steps.map((s) => ({
-        instruction: s.instruction,
-        status: s.status,
-        result: s.result ?? "",
-        screenshotPath: s.screenshotPath,
-        duration: 0,
-        error: s.error
-      })) ?? [],
-      screenshots: finalTask?.steps.flatMap((s) => (s.screenshotPath ? [s.screenshotPath] : [])) ?? [],
-      aiReasoning: "Steps executed sequentially via browser-use AI agent."
-    };
-
-    attachReport(taskId, report);
-    updateTask(taskId, { status: failed === 0 ? "done" : "partial" as TaskStatus });
-    emitProgress({ type: "task_complete", taskId, data: report });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    emitProgress({ type: "task_failed", taskId, message });
-    updateTask(taskId, { status: "failed" });
-  }
+  await runQaTaskWithAgent(task, settings);
 
   runningTaskId = null;
-}
-
-async function generateTaskSteps(
-  task: QaTask,
-  settings: AppSettings
-): Promise<{ id: string; order: number; instruction: string; status: TaskStepStatus; timestamp: string }[]> {
-  // Simple step generation: parse natural language instruction into steps
-  // Full AI planning will use browser-use Agent
-  const instructions = task.name.split(/[,;]|\band\b|\bthen\b/i).map((s) => s.trim()).filter(Boolean);
-
-  if (instructions.length === 0) {
-    instructions.push("Navigate to the page and verify it loads correctly");
-  }
-
-  return instructions.map((instruction, i) => ({
-    id: generateId(),
-    order: i + 1,
-    instruction,
-    status: "pending" as TaskStepStatus,
-    timestamp: new Date().toISOString()
-  }));
-}
-
-interface StepResult {
-  message: string;
-  screenshotPath?: string;
-}
-
-async function executeStep(
-  _browserView: BrowserView | null,
-  step: { id: string; instruction: string },
-  task: QaTask,
-  _settings: AppSettings
-): Promise<StepResult> {
-  // Execute the step instruction using AI + browser-use
-  // For now, simulate step execution with browser state
-  await new Promise((r) => setTimeout(r, 800)); // Simulate work
-
-  const currentUrl = browserView?.webContents.getURL() ?? "";
-
-  // Detect step type from instruction keywords
-  const instr = step.instruction.toLowerCase();
-
-  if (instr.includes("navigate") || instr.includes("open") || instr.includes("go to")) {
-    if (browserView && instr.includes(task.targetUrl)) {
-      browserView.webContents.loadURL(task.targetUrl).catch(() => {});
-    }
-    return { message: `Navigated to ${currentUrl || task.targetUrl}` };
-  }
-
-  if (instr.includes("login") || instr.includes("sign in")) {
-    // Simulate login form interaction
-    return {
-      message: "Login form detected. Test credentials would be entered here.",
-      screenshotPath: await captureScreenshot()
-    };
-  }
-
-  if (instr.includes("click") || instr.includes("button")) {
-    return {
-      message: `Clicked button as instructed: "${step.instruction}"`,
-      screenshotPath: await captureScreenshot()
-    };
-  }
-
-  if (instr.includes("fill") || instr.includes("enter") || instr.includes("type")) {
-    return { message: `Filled form field: "${step.instruction}"` };
-  }
-
-  if (instr.includes("verify") || instr.includes("check") || instr.includes("assert")) {
-    const isSuccess = Math.random() > 0.15; // 85% pass rate for demo
-    if (!isSuccess) {
-      throw new Error(`Verification failed: expected element not found`);
-    }
-    return {
-      message: `Verification passed: "${step.instruction}"`,
-      screenshotPath: await captureScreenshot()
-    };
-  }
-
-  if (instr.includes("screenshot")) {
-    const screenshotPath = await captureScreenshot();
-    return { message: "Screenshot captured", screenshotPath };
-  }
-
-  if (instr.includes("close") || instr.includes("logout") || instr.includes("sign out")) {
-    return { message: `Executed: "${step.instruction}"` };
-  }
-
-  // Generic step
-  return {
-    message: `Executed: "${step.instruction}"`,
-    screenshotPath: await captureScreenshot()
-  };
-}
-
-async function captureScreenshot(): Promise<string | undefined> {
-  if (!browserView || !mainWindow) return undefined;
-  try {
-    const screenshotDir = path.join(app.getPath("userData"), "screenshots");
-    fs.mkdirSync(screenshotDir, { recursive: true });
-    const filename = `screenshot-${Date.now()}.png`;
-    const filePath = path.join(screenshotDir, filename);
-    const image = await browserView.webContents.capturePage();
-    fs.writeFileSync(filePath, image.toPNG());
-    return filePath;
-  } catch {
-    return undefined;
-  }
 }
 
 // ─── Progress Emitter ─────────────────────────────────────────────────────
@@ -515,8 +500,6 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("browser:mode", (_, mode: "headed" | "headless") => {
-    // browser-use handles headed/headless at the agent level
-    // This IPC just records the preference
     console.log("[IPC] browser:mode", mode);
   });
 
@@ -525,7 +508,6 @@ function registerIpc(): void {
 
   ipcMain.handle("tasks:create", (_, input: QaTaskInput): QaTask => {
     const task = createTask(input);
-    // Navigate to target URL in preview
     if (browserView) {
       browserView.webContents.loadURL(input.targetUrl).catch(() => {});
     }
@@ -550,7 +532,7 @@ function registerIpc(): void {
     if (runningTaskId && runningTaskId !== taskId) {
       throw new Error(`Task ${runningTaskId} is already running. Stop it first.`);
     }
-    if (runningTaskId === taskId) return; // Already running
+    if (runningTaskId === taskId) return;
     void runQaTask(taskId);
   });
 
@@ -562,14 +544,12 @@ function registerIpc(): void {
 
   ipcMain.handle("tasks:pause", (_, taskId: string) => {
     if (runningTaskId === taskId) {
-      pauseTaskFlag = true;
       updateTask(taskId, { status: "paused" });
     }
   });
 
   ipcMain.handle("tasks:resume", (_, taskId: string) => {
     if (runningTaskId === taskId) {
-      pauseTaskFlag = false;
       updateTask(taskId, { status: "running" });
     }
   });
@@ -606,7 +586,9 @@ function registerIpc(): void {
 }
 
 function generateMarkdownReport(report: QaReport): string {
-  const statusBadge = report.overallStatus === "pass" ? "✅ PASS" : report.overallStatus === "fail" ? "❌ FAIL" : "⚠️  PARTIAL";
+  const statusBadge =
+    report.overallStatus === "pass" ? "✅ PASS" :
+    report.overallStatus === "fail" ? "❌ FAIL" : "⚠️  PARTIAL";
 
   const lines = [
     `# QA Report: ${report.taskName}`,
@@ -633,9 +615,12 @@ function generateMarkdownReport(report: QaReport): string {
     "| # | Instruction | Status | Result |",
     "|---|------------|--------|--------|",
     ...report.steps.map((step, i) => {
-      const statusIcon = step.status === "done" ? "✅" : step.status === "failed" ? "❌" : step.status === "skipped" ? "⏭️ " : "⏳";
+      const statusIcon =
+        step.status === "done" ? "✅" :
+        step.status === "failed" ? "❌" :
+        step.status === "skipped" ? "⏭️ " : "⏳";
       const statusText = step.status.charAt(0).toUpperCase() + step.status.slice(1);
-      const resultText = (step.result || step.error || "—").replace(/\n/g, " ").slice(0, 60);
+      const resultText = (step.result || step.error || "—").replace(/\n/g, " ").slice(0, 80);
       return `| ${i + 1} | ${step.instruction} | ${statusIcon} ${statusText} | ${resultText} |`;
     }),
     "",
@@ -650,14 +635,11 @@ function generateMarkdownReport(report: QaReport): string {
 app.whenReady().then(() => {
   app.setAppUserModelId("com.qa-automation-ai.app");
   Menu.setApplicationMenu(null);
-
-  // Clear bad HTTPS certs in dev
   session.defaultSession.setCertificateVerifyProc(() => ({ action: "grant" }));
 
   registerIpc();
   createWindow();
   createBrowserView();
-  // Attach browser view after window content loads
   mainWindow?.webContents.once("did-finish-load", () => {
     attachBrowserViewToMain();
   });
