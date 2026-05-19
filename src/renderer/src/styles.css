@@ -136,6 +136,12 @@ textarea {
     -webkit-backdrop-filter: blur(24px) saturate(180%);
   }
 
+  .mica-topbar {
+    background: rgba(18, 18, 22, 0.45);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+  }
+
   .lead-table {
     @apply w-full border-collapse text-left text-sm;
   }
