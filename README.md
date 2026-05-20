@@ -178,6 +178,48 @@ fi
 
 ---
 
+## AI Agent Skill (for Antigravity, Claude Code, Codex, Cline, etc.)
+
+<p align="center">
+  <img src="public/cc.png" alt="AgentQA in Claude Code" width="800" />
+</p>
+
+We provide a built-in skill so that AI coding assistants can learn how to use the `agentqa` CLI directly within your codebase. This allows agents to autonomously verify their own code changes!
+
+### How Agents Use It
+Because the skill is located in the `skills/agentqa-cli/` directory of the repository:
+- **Antigravity / Codex**: Automatically discovers and loads the skill from the workspace root.
+- **Claude Code**: Reads and adopts instructions from the local `skills/` directory and `AGENTS.md` automatically when running in this project.
+- **Other Agents**: If using an extension (like Cline or Roo Code), you can import the custom skill instructions from `skills/agentqa-cli/SKILL.md`.
+
+*(This teaches the agent how to run `agentqa` and how to interpret the JSON output).*
+
+### Installing Globally in Claude Code
+
+If you want the `agentqa-cli` skill to be available to Claude Code globally across all your projects, copy the skill folder to Claude's global skills directory:
+
+* **Windows**:
+  ```powershell
+  xcopy /E /I skills\agentqa-cli %USERPROFILE%\.claude\skills\agentqa-cli
+  ```
+* **macOS / Linux**:
+  ```bash
+  cp -r skills/agentqa-cli ~/.claude/skills/agentqa-cli
+  ```
+
+### Fetching the Skill in Other Repositories
+
+If you want to install or reference the AgentQA skill in another workspace, you can instruct your agent using local file paths or web URLs:
+
+* **Via File URI (Antigravity/Codex)**:
+  Provide the path using the `file://` scheme to point directly to the skill template:
+  `file:///C:/Users/alish/.claude/skills/agentqa-cli/SKILL.md`
+* **Via Web URL**:
+  Ask the agent to download the raw skill from GitHub:
+  > "Please download the AgentQA CLI skill configuration from \`https://raw.githubusercontent.com/AliSharjeell/AgentQA/master/skills/agentqa-cli/SKILL.md\` and save it locally in my project at \`skills/agentqa-cli/SKILL.md\`. After downloading, read the skill guidelines to understand how to verify my code changes using the global \`agentqa\` command."
+
+---
+
 ## Project Structure
 
 ```
@@ -303,49 +345,7 @@ The AI agent follows these rules when testing:
 - Use `set_value()` for all form inputs (React/Vue compatible)
 - Wrap all scripts in try/except with structured error output
 
----
 
-## AI Agent Skill (for Antigravity, Claude Code, Codex, Cline, etc.)
-
-<p align="center">
-  <img src="public/cc.png" alt="AgentQA in Claude Code" width="800" />
-</p>
-
-We provide a built-in skill so that AI coding assistants can learn how to use the `agentqa` CLI directly within your codebase. This allows agents to autonomously verify their own code changes!
-
-### How Agents Use It
-Because the skill is located in the `skills/agentqa-cli/` directory of the repository:
-- **Antigravity / Codex**: Automatically discovers and loads the skill from the workspace root.
-- **Claude Code**: Reads and adopts instructions from the local `skills/` directory and `AGENTS.md` automatically when running in this project.
-- **Other Agents**: If using an extension (like Cline or Roo Code), you can import the custom skill instructions from `skills/agentqa-cli/SKILL.md`.
-
-*(This teaches the agent how to run `agentqa` and how to interpret the JSON output).*
-
-### Installing Globally in Claude Code
-
-If you want the `agentqa-cli` skill to be available to Claude Code globally across all your projects, copy the skill folder to Claude's global skills directory:
-
-* **Windows**:
-  ```powershell
-  xcopy /E /I skills\agentqa-cli %USERPROFILE%\.claude\skills\agentqa-cli
-  ```
-* **macOS / Linux**:
-  ```bash
-  cp -r skills/agentqa-cli ~/.claude/skills/agentqa-cli
-  ```
-
-### Fetching the Skill in Other Repositories
-
-If you want to install or reference the AgentQA skill in another workspace, you can instruct your agent using local file paths or web URLs:
-
-* **Via File URI (Antigravity/Codex)**:
-  Provide the path using the `file://` scheme to point directly to the skill template:
-  `file:///C:/Users/alish/.claude/skills/agentqa-cli/SKILL.md`
-* **Via Web URL**:
-  Ask the agent to download the raw skill from GitHub:
-  > "Please download the AgentQA CLI skill configuration from \`https://raw.githubusercontent.com/AliSharjeell/AgentQA/master/skills/agentqa-cli/SKILL.md\` and save it locally in my project at \`skills/agentqa-cli/SKILL.md\`. After downloading, read the skill guidelines to understand how to verify my code changes using the global \`agentqa\` command."
-
----
 
 ## Troubleshooting
 
