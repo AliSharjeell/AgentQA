@@ -53,12 +53,14 @@ function getCoreBehaviourRules(): string {
 
 function summarizeElements(observation: PageObservation): string {
   return observation.availableElements
-    .slice(0, 180)
+    .slice(0, 100)
     .map((el) => {
       const flags = [
         el.disabled ? 'disabled' : '',
         el.checked ? 'checked' : '',
         el.selected ? 'selected' : '',
+        el.selector ? `selector=${el.selector.slice(0, 90)}` : '',
+        el.classes && !el.description.includes(el.classes) ? `class=${el.classes.slice(0, 80)}` : '',
         el.href ? `href=${el.href.slice(0, 120)}` : '',
         el.value ? `value=${String(el.value).slice(0, 80)}` : ''
       ].filter(Boolean).join(', ');
@@ -120,7 +122,7 @@ Available elements:
 ${summarizeElements(input.observation)}
 
 Page text excerpt:
-${input.observation.pageText.slice(0, 4500) || 'No page text detected.'}
+${input.observation.pageText.slice(0, 2600) || 'No page text detected.'}
 
 Console errors:
 ${input.observation.consoleErrors.length ? input.observation.consoleErrors.join('\n') : 'None'}
@@ -140,11 +142,15 @@ Action protocol:
 - scroll: use dy, negative scrolls down in browser-harness.
 - wait: use seconds, max 10.
 - navigate: use only to follow an actual intended URL, never to restart the same flow after failure.
+- batch: 2 to 5 deterministic sub-actions in one browser turn. Use only when confidence is 0.90 or higher, such as filling a visible login form then clicking its visible submit button, filling a checkout form then continuing, or clicking several visible known product add buttons. Do not batch steps that require observing changed DOM between them.
 - finish_task: only when PASS/FAIL/AGENT_FAILED/INFRA_FAILED report is ready.
 - fail_task: when you must stop with a non-PASS report.
 
 Important:
+- The original task text is authoritative. Do not rewrite, shorten, or replace the scenario.
+- If the task contains a numbered checklist, every numbered item must be completed or explicitly failed before PASS.
 - Do not restart the task from the beginning when stuck.
+- Prefer a high-confidence batch for obvious forms with all required fields and submit button visible. Include "confidence": 0.90 or higher. If not that certain, use one action.
 - If an element is missing, scroll/read/wait or choose another visible element.
 - If selecting product options, choose the required base/default option from current DOM text and verify selection before add-to-cart.
 - Keep a QA fault log. A failed automation action is not automatically a site bug.
@@ -159,12 +165,17 @@ Return exactly this JSON shape:
     { "step": 2, "description": "Current work", "status": "CURRENT" }
   ],
   "activePhase": {
-    "action": "click | type | read | scroll | wait | navigate | finish_task | fail_task",
+    "action": "click | type | read | scroll | wait | navigate | batch | finish_task | fail_task",
     "targetId": "elem_0 when needed",
     "value": "text when needed",
     "url": "url when action is navigate",
     "dy": -650,
     "seconds": 1,
+    "confidence": 0.95,
+    "actions": [
+      { "action": "type", "targetId": "elem_0", "value": "text" },
+      { "action": "click", "targetId": "elem_1" }
+    ],
     "reason": "why this action is next"
   },
   "faults": [

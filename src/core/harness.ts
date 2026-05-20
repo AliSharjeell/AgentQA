@@ -81,7 +81,7 @@ export interface PageObservation {
   consoleErrors: string[];
 }
 
-export type StructuredActionName = 'click' | 'type' | 'read' | 'scroll' | 'wait' | 'navigate';
+export type StructuredActionName = 'click' | 'type' | 'read' | 'scroll' | 'wait' | 'navigate' | 'batch';
 
 export interface StructuredAction {
   action: StructuredActionName;
@@ -90,8 +90,11 @@ export interface StructuredAction {
   url?: string;
   dy?: number;
   seconds?: number;
+  confidence?: number;
   reason?: string;
   description?: string;
+  actions?: StructuredAction[];
+  _target?: ObservedElement | null;
 }
 
 interface ResolvedCommand {
@@ -203,14 +206,14 @@ async function startManagedBrowser(): Promise<ManagedBrowser> {
     });
   }
 
-  for (let attempt = 0; attempt < 80; attempt++) {
+  for (let attempt = 0; attempt < 100; attempt++) {
     if (await isCdpReachable(cdpUrl)) {
       return { cdpUrl, process: child };
     }
     if (child.exitCode !== null) {
       throw new Error(`Chrome exited before the debugging port became reachable. ${stderr.trim()}`);
     }
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   child.kill();
@@ -243,7 +246,7 @@ import time as _time
 def set_value(selector, text):
     """Set an input's value progressively via JavaScript — works in React, Vue, and vanilla HTML."""
     _sel = _json.dumps(selector)
-    # Clear the input first
+    _val = _json.dumps(text)
     js(f"""(() => {{
         const el = document.querySelector({_sel});
         if (!el) throw new Error('set_value: element not found: ' + {_sel});
@@ -251,46 +254,11 @@ def set_value(selector, text):
         const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
             || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
             || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-        if (descriptor && descriptor.set) {{
-            descriptor.set.call(el, '');
-        }} else {{
-            el.value = '';
-        }}
+        if (descriptor && descriptor.set) descriptor.set.call(el, {_val});
+        else el.value = {_val};
         el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    }})()""")
-    
-    _len = len(text)
-    if _len == 0:
-        return
-        
-    # Dynamically scale typing delay so long texts don't block tests
-    _delay = 0.03 if _len <= 50 else (1.5 / _len)
-    
-    _current = ""
-    for _char in text:
-        _current += _char
-        _val = _json.dumps(_current)
-        js(f"""(() => {{
-            const el = document.querySelector({_sel});
-            if (!el) return;
-            const proto = Object.getPrototypeOf(el);
-            const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
-                || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-                || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-            if (descriptor && descriptor.set) {{
-                descriptor.set.call(el, {_val});
-            }} else {{
-                el.value = {_val};
-            }}
-            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-        }})()""")
-        _time.sleep(_delay)
-        
-    # Final event dispatch for change/blur
-    js(f"""(() => {{
-        const el = document.querySelector({_sel});
-        if (!el) return;
         el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
     }})()""")
 
 `;
@@ -496,17 +464,22 @@ function buildDomSnapshotPython(): string {
       };
       const describe = (el) => {
         const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-        return (
+        const stableName = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.id || el.getAttribute('name') || '';
+        const base = (
           el.getAttribute('aria-label') ||
           el.getAttribute('title') ||
           el.getAttribute('placeholder') ||
           text ||
-          el.getAttribute('value') ||
-          el.getAttribute('name') ||
-          el.id ||
           el.href ||
+          el.getAttribute('value') ||
+          stableName ||
+          String(el.className || '').replace(/\\s+/g, ' ').trim() ||
           el.tagName.toLowerCase()
         ).trim();
+        if (stableName && base && !base.toLowerCase().includes(String(stableName).toLowerCase()) && /^(add to cart|remove|checkout|continue|login|submit)$/i.test(base)) {
+          return (base + ' (' + stableName + ')').trim();
+        }
+        return base;
       };
       const typeFor = (el) => {
         const tag = el.tagName.toLowerCase();
@@ -534,15 +507,15 @@ function buildDomSnapshotPython(): string {
         elements.push({
           id: 'elem_' + idx++,
           type: typeFor(el),
-          description: description.slice(0, 220),
+          description: description.slice(0, 160),
           value,
-          text: (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 220),
+          text: (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 160),
           tag: el.tagName.toLowerCase(),
           selector: selectorFor(el),
           href: el.href || '',
           role: el.getAttribute('role') || '',
           name: el.getAttribute('name') || '',
-          classes: String(el.className || '').slice(0, 160),
+          classes: String(el.className || '').slice(0, 100),
           x: Math.round(rect.left + rect.width / 2),
           y: Math.round(rect.top + rect.height / 2),
           visible: true,
@@ -550,12 +523,12 @@ function buildDomSnapshotPython(): string {
           checked: Boolean(el.checked || el.getAttribute('aria-checked') === 'true'),
           selected: Boolean(el.selected || el.getAttribute('aria-selected') === 'true')
         });
-        if (elements.length >= 350) break;
+        if (elements.length >= 140) break;
       }
       return {
         availableElements: elements,
-        pageText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 8000),
-        consoleErrors: (window.__agentqaConsoleErrors || []).slice(-25)
+        pageText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 4500),
+        consoleErrors: (window.__agentqaConsoleErrors || []).slice(-12)
       };
     })()""")
     elements = snapshot.get("availableElements", []) if isinstance(snapshot, dict) else []
@@ -579,13 +552,28 @@ function indentPython(script: string, prefix: string): string {
     .join('\n');
 }
 
+function attachTargets(action: StructuredAction, target: ObservedElement | null): StructuredAction {
+  if (action.action !== 'batch') {
+    return { ...action, _target: target };
+  }
+
+  return {
+    ...action,
+    _target: target,
+    actions: (action.actions || []).map((item) => ({
+      ...item,
+      _target: item._target ?? null
+    }))
+  };
+}
+
 export function buildObservationScript(targetUrl: string, navigate: boolean = false): string {
   const openStep = navigate
     ? `
     emit({"instruction": "Open " + target_url, "status": "running"})
     goto_url(target_url)
     wait_for_load()
-    time.sleep(1)
+    time.sleep(0.3)
     emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + str(js("window.location.href"))})
 `
     : '';
@@ -611,13 +599,14 @@ except Exception as exc:
 }
 
 export function buildActionScript(action: StructuredAction, target: ObservedElement | null, taskUrl: string): string {
+  const actionWithTargets = attachTargets(action, target);
   return `
 import json
 import time
 
 target_url = ${JSON.stringify(taskUrl)}
-action = json.loads(${JSON.stringify(JSON.stringify(action))})
-target = json.loads(${JSON.stringify(JSON.stringify(target))})
+action = json.loads(${JSON.stringify(JSON.stringify(actionWithTargets))})
+target = action.get("_target")
 
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
@@ -628,35 +617,50 @@ def target_selector():
     return target.get("selector") or ""
 
 def click_target():
-    if not target:
+    active_target = action.get("_target") or target
+    if not active_target:
         raise Exception("Target element is required for click action.")
-    selector = target_selector()
+    selector = active_target.get("selector") or ""
     pos = None
     if selector:
         sel = json.dumps(selector)
+        clicked = js(f"""(() => {{
+          const el = document.querySelector({sel});
+          if (!el) return false;
+          el.scrollIntoView({{block: 'center', inline: 'center'}});
+          if (typeof el.click === 'function') {{
+            el.click();
+            return true;
+          }}
+          el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+          return true;
+        }})()""")
+        if clicked:
+            return
         pos = js(f"""(() => {{
           const el = document.querySelector({sel});
           if (!el) return null;
-          el.scrollIntoView({{block: 'center', inline: 'center'}});
           const rect = el.getBoundingClientRect();
           return {{x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2)}};
         }})()""")
     if not pos:
-        pos = {"x": target.get("x", 0), "y": target.get("y", 0)}
+        pos = {"x": active_target.get("x", 0), "y": active_target.get("y", 0)}
     click_at_xy(int(pos["x"]), int(pos["y"]))
 
 def type_target(value):
-    if not target:
+    active_target = action.get("_target") or target
+    if not active_target:
         raise Exception("Target element is required for type action.")
-    selector = target_selector()
+    selector = active_target.get("selector") or ""
     if not selector:
         raise Exception("Target element has no usable selector for type action.")
     set_value(selector, str(value or ""))
 
 def read_target():
-    if not target:
+    active_target = action.get("_target") or target
+    if not active_target:
         raise Exception("Target element is required for read action.")
-    selector = target_selector()
+    selector = active_target.get("selector") or ""
     if selector:
         sel = json.dumps(selector)
         value = js(f"""(() => {{
@@ -666,44 +670,71 @@ def read_target():
         }})()""")
         if value is not None:
             return str(value)
-    return str(target.get("value") or target.get("description") or target.get("text") or "")
+    return str(active_target.get("value") or active_target.get("description") or active_target.get("text") or "")
+
+def execute_one(item):
+    global action
+    previous_action = action
+    action = item
+    kind = item.get("action")
+    result = ""
+    if kind == "click":
+        click_target()
+        result = "Clicked " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
+    elif kind == "type":
+        type_target(item.get("value", ""))
+        result = "Typed into " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
+    elif kind == "read":
+        result = read_target()
+    elif kind == "scroll":
+        dy = int(item.get("dy") or -650)
+        scroll(500, 500, dy=dy)
+        result = "Scrolled by " + str(dy)
+    elif kind == "wait":
+        seconds = float(item.get("seconds") or 1)
+        if seconds < 0:
+            seconds = 0
+        if seconds > 10:
+            seconds = 10
+        time.sleep(seconds)
+        result = "Waited " + str(seconds) + " seconds"
+    elif kind == "navigate":
+        url = item.get("url")
+        if not url:
+            raise Exception("Navigate action requires url.")
+        goto_url(str(url))
+        wait_for_load()
+        result = "Navigated to " + str(url)
+    else:
+        raise Exception("Unsupported action: " + str(kind))
+    action = previous_action
+    return result
 
 try:
     instruction = action.get("description") or action.get("action", "action")
     emit({"instruction": instruction, "status": "running"})
     action_result = ""
     kind = action.get("action")
-    if kind == "click":
-        click_target()
-        action_result = "Clicked " + str(target.get("id") if target else "")
-    elif kind == "type":
-        type_target(action.get("value", ""))
-        action_result = "Typed into " + str(target.get("id") if target else "")
-    elif kind == "read":
-        action_result = read_target()
-    elif kind == "scroll":
-        dy = int(action.get("dy") or -650)
-        scroll(500, 500, dy=dy)
-        action_result = "Scrolled by " + str(dy)
-    elif kind == "wait":
-        seconds = float(action.get("seconds") or 1)
-        if seconds < 0:
-            seconds = 0
-        if seconds > 10:
-            seconds = 10
-        time.sleep(seconds)
-        action_result = "Waited " + str(seconds) + " seconds"
-    elif kind == "navigate":
-        url = action.get("url")
-        if not url:
-            raise Exception("Navigate action requires url.")
-        goto_url(str(url))
-        wait_for_load()
-        action_result = "Navigated to " + str(url)
+    url_before = js("window.location.href")
+    text_before = js("(document.body && document.body.innerText || '').slice(0, 300)")
+    if kind == "batch":
+        results = []
+        for item in action.get("actions", []):
+            results.append(execute_one(item))
+            time.sleep(0.12)
+        action_result = "; ".join(results)
     else:
-        raise Exception("Unsupported action: " + str(kind))
+        action_result = execute_one(action)
 
-    time.sleep(0.8)
+    for _ in range(12):
+        time.sleep(0.1)
+        try:
+            url_now = js("window.location.href")
+            text_now = js("(document.body && document.body.innerText || '').slice(0, 300)")
+            if url_now != url_before or text_now != text_before:
+                break
+        except Exception:
+            break
     emit({"instruction": instruction, "status": "done", "result": action_result})
 ${buildDomSnapshotPython()}
     observation["actionResult"] = action_result

@@ -136,12 +136,22 @@ function isStructuredAction(action: AgentAction): action is StructuredAction {
 
 function describeAction(action: AgentAction, target?: ObservedElement | null): string {
   if (!isStructuredAction(action)) return action.action === 'finish_task' ? 'Finish task' : 'Fail task';
+  if (action.action === 'batch') {
+    const count = action.actions?.length || 0;
+    return action.description || `batch ${count} actions`;
+  }
   const targetText = target ? ` ${target.id} "${target.description}"` : '';
   const valueText = action.value ? ` value "${action.value.slice(0, 80)}"` : '';
   return `${action.action}${targetText}${valueText}`;
 }
 
 function actionSignature(action: AgentAction): string {
+  if (isStructuredAction(action) && action.action === 'batch') {
+    return [
+      'batch',
+      ...(action.actions || []).map((item) => actionSignature(item))
+    ].join('||');
+  }
   return [
     action.action,
     'targetId' in action ? action.targetId || '' : '',
@@ -164,13 +174,56 @@ function normalizeUrl(value: string): string {
 }
 
 function isRestartNavigation(action: AgentAction, targetUrl: string, history: AgentHistoryEntry[]): boolean {
-  if (!isStructuredAction(action) || action.action !== 'navigate' || !action.url || history.length === 0) return false;
-  return normalizeUrl(action.url) === normalizeUrl(targetUrl);
+  if (!isStructuredAction(action) || history.length === 0) return false;
+  if (action.action === 'batch') {
+    return (action.actions || []).some((item) => isRestartNavigation(item, targetUrl, history));
+  }
+  return action.action === 'navigate' && Boolean(action.url) && normalizeUrl(action.url || '') === normalizeUrl(targetUrl);
 }
 
 function findTarget(action: AgentAction, observation: PageObservation): ObservedElement | null {
   if (!isStructuredAction(action) || !action.targetId) return null;
   return observation.availableElements.find((el) => el.id === action.targetId) || null;
+}
+
+function targetForId(targetId: string | undefined, observation: PageObservation): ObservedElement | null {
+  if (!targetId) return null;
+  return observation.availableElements.find((el) => el.id === targetId) || null;
+}
+
+function resolveExecutableAction(action: StructuredAction, observation: PageObservation): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
+  if (action.action !== 'batch') {
+    const target = targetForId(action.targetId, observation);
+    if (['click', 'type', 'read'].includes(action.action) && !target) {
+      return { target: null, error: `Target ${action.targetId || '(missing)'} is not available in the current DOM observation.` };
+    }
+    return { action, target };
+  }
+
+  const subactions = action.actions || [];
+  if (typeof action.confidence !== 'number' || action.confidence < 0.9) {
+    return { target: null, error: 'Batch action blocked: confidence must be at least 0.90.' };
+  }
+  if (subactions.length < 2 || subactions.length > 5) {
+    return { target: null, error: 'Batch action blocked: it must contain 2 to 5 sub-actions.' };
+  }
+
+  const resolvedSubactions: StructuredAction[] = [];
+  for (const [index, item] of subactions.entries()) {
+    if (item.action === 'batch') {
+      return { target: null, error: `Batch action blocked: nested batch at sub-action ${index + 1}.` };
+    }
+    const target = targetForId(item.targetId, observation);
+    if (['click', 'type', 'read'].includes(item.action) && !target) {
+      return { target: null, error: `Batch action blocked: target ${item.targetId || '(missing)'} is unavailable for sub-action ${index + 1}.` };
+    }
+    resolvedSubactions.push({ ...item, _target: target });
+  }
+
+  return {
+    action: { ...action, actions: resolvedSubactions },
+    target: null
+  };
 }
 
 function mergeFaults(existing: QaFault[], incoming: QaFault[]): QaFault[] {
@@ -248,6 +301,20 @@ function addConsoleFaults(faults: QaFault[], observation: PageObservation, step:
   return mergeFaults(faults, consoleFaults);
 }
 
+function countNumberedObjectives(prompt: string): number {
+  return prompt
+    .split(/\r?\n/)
+    .filter((line) => /^\s*\d+\.\s+\S/.test(line))
+    .length;
+}
+
+function objectiveCoverageCount(report: CliReport | null | undefined, plan: AgentPlanStep[]): number {
+  return Math.max(
+    report?.stepsExecuted?.length || 0,
+    plan.filter((step) => step.status === 'DONE').length
+  );
+}
+
 export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   const { targetUrl, prompt, settings, cdpUrl, timeoutMs = 120000 } = options;
   const onStep = options.onStep || (() => {});
@@ -306,7 +373,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   let blockedActionSignature: string | null = null;
   let resetDirective: string | null = null;
   let parseFailures = 0;
-  const maxSteps = 30;
+  const maxSteps = 40;
+  const numberedObjectiveCount = countNumberedObjectives(prompt);
 
   addStep(`Open and inspect ${targetUrl}`, 'running');
   onStep({ instruction: `Open and inspect ${targetUrl}`, status: 'running' });
@@ -400,8 +468,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     onStep({ instruction: `Plan next QA action (${stepNum}/${maxSteps})`, status: 'done', result: parsed.thought });
 
     const action = parsed.activePhase;
-    const target = findTarget(action, observation);
-    const actionDescription = describeAction(action, target);
+    const initialTarget = findTarget(action, observation);
+    const actionDescription = describeAction(action, initialTarget);
 
     if (parsed.report || action.action === 'finish_task' || action.action === 'fail_task') {
       const report = parsed.report || makeReport({
@@ -414,6 +482,14 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         evidence: [parsed.thought || action.reason || 'Task completed.'],
         consoleErrors: observation.consoleErrors
       });
+      const coveredObjectives = objectiveCoverageCount(parsed.report, parsed.plan);
+      if (report.result === 'PASS' && numberedObjectiveCount > 0 && coveredObjectives < numberedObjectiveCount) {
+        const result = `Blocked premature PASS: only ${coveredObjectives} checklist items were marked complete/reported for ${numberedObjectiveCount} numbered objectives.`;
+        history.push({ step: stepNum, action: action.action, status: 'blocked', result, url: currentUrl });
+        lastActionResult = result;
+        resetDirective = `You attempted to finish early. The original task has ${numberedObjectiveCount} numbered objectives. Continue from the current page and complete/verify every remaining objective before PASS.`;
+        continue;
+      }
       report.faultLog = mergeFaults(report.faultLog || [], faults);
       if (!report.consoleErrors?.length) report.consoleErrors = observation.consoleErrors;
       return finishWithReport(report, parsed.thought || report.evidence[0] || report.result, currentUrl);
@@ -427,8 +503,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     }
 
     if (isRestartNavigation(action, targetUrl, history)) {
-      const result = `Blocked restart navigation to ${action.url}`;
-      history.push({ step: stepNum, action: 'navigate', value: action.url, status: 'blocked', result, url: currentUrl });
+      const result = `Blocked restart navigation to ${action.action === 'navigate' ? action.url : 'target URL inside batch'}`;
+      history.push({ step: stepNum, action: action.action, value: action.action === 'navigate' ? action.url : actionSignature(action), status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       blockedActionSignature = actionSignature(action);
       resetDirective = `You attempted to restart the flow by navigating to the target URL. Do not restart. Continue from the current page state or fail with evidence.`;
@@ -469,15 +545,17 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       continue;
     }
 
-    if (['click', 'type', 'read'].includes(action.action) && !target) {
-      const result = `Target ${action.targetId || '(missing)'} is not available in the current DOM observation.`;
+    const resolved = resolveExecutableAction(action, observation);
+    if (resolved.error || !resolved.action) {
+      const result = resolved.error || 'Action could not be resolved against the current DOM observation.';
       history.push({ step: stepNum, action: action.action, targetId: action.targetId, status: 'failed', result, url: currentUrl });
       lastActionResult = result;
       resetDirective = `The requested target was not present. Select a visible targetId from the current available elements, scroll, read state, or fail with evidence.`;
       continue;
     }
 
-    const executableAction: StructuredAction = { ...action, description: actionDescription };
+    const target = resolved.target;
+    const executableAction: StructuredAction = { ...resolved.action, description: actionDescription };
     addStep(actionDescription, 'running');
     onStep({ instruction: actionDescription, status: 'running' });
 
