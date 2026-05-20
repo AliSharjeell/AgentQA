@@ -23,3 +23,7 @@ outreach-store.json
 !package.json
 !tsconfig*.json
 !plugin.json
+
+# Electron builder outputs
+dist_electron/
+dist_electron_temp/
