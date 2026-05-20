@@ -26,6 +26,130 @@ export type TaskStepStatus = "pending" | "running" | "done" | "failed" | "skippe
 
 export type BrowserMode = "headed" | "headless";
 
+export type AgentRunMode = "standard" | "browser-use" | "advanced";
+
+export type AgentExecutorKind = "registry-app" | "standard-cdp" | "browser-use" | "browser-harness-dev";
+
+export type AgentElementType =
+  | "button"
+  | "input"
+  | "text"
+  | "link"
+  | "checkbox"
+  | "select"
+  | "list"
+  | "image"
+  | "unknown";
+
+export type AgentActionName =
+  | "open_url"
+  | "click"
+  | "tap"
+  | "type"
+  | "read"
+  | "scroll"
+  | "wait"
+  | "press_key"
+  | "select"
+  | "assert"
+  | "batch"
+  | "tell_user"
+  | "ask_user"
+  | "request_executor_switch"
+  | "finish_task"
+  | "error";
+
+export type AgentActionStatus = "success" | "failed" | "skipped" | "needs_user" | "blocked";
+
+export type AgentActionErrorCode =
+  | "ELEMENT_NOT_FOUND"
+  | "TIMEOUT"
+  | "NAVIGATION_FAILED"
+  | "ASSERTION_FAILED"
+  | "LLM_PARSE_ERROR"
+  | "BOT_PROTECTION"
+  | "EXECUTOR_UNAVAILABLE"
+  | "SWITCH_DENIED"
+  | "UNKNOWN";
+
+export interface AgentBoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AvailableElement {
+  id: string;
+  type: AgentElementType;
+  description: string;
+  value?: string | null;
+  selector?: string;
+  bbox?: AgentBoundingBox;
+  visible: boolean;
+  enabled: boolean;
+  confidence: number;
+}
+
+export interface AgentObservation {
+  session_id: string;
+  url: string;
+  title: string;
+  current_screen: string;
+  available_elements: AvailableElement[];
+  page_text_summary: string;
+  screenshot_path?: string;
+  console_errors: string[];
+  network_errors: string[];
+}
+
+export interface AgentAction {
+  action: AgentActionName;
+  target_id?: string | null;
+  value?: string | null;
+  reason?: string;
+  confidence?: number;
+  actions?: AgentAction[];
+}
+
+export interface AgentActionResult {
+  step: number;
+  action: AgentActionName | string;
+  target_id?: string | null;
+  status: AgentActionStatus;
+  error_code?: AgentActionErrorCode;
+  message: string;
+  screen_before?: string;
+  screen_after?: string;
+  url_before?: string;
+  url_after?: string;
+  screenshot_before?: string;
+  screenshot_after?: string;
+  timestamp: string;
+  executor: AgentExecutorKind;
+}
+
+export interface AgentPlanStep {
+  id: string;
+  description: string;
+  status: "PENDING" | "CURRENT" | "DONE" | "FAILED" | "BLOCKED";
+  linked_action_step?: number;
+}
+
+export interface AgentPlan {
+  plan_id: string;
+  steps: AgentPlanStep[];
+}
+
+export interface ExecutorSwitchRequest {
+  from: AgentExecutorKind;
+  to: AgentExecutorKind;
+  reason: string;
+  status: "approved" | "denied";
+  message: string;
+  timestamp: string;
+}
+
 // ─── API Config ─────────────────────────────────────────────────────────────
 
 export interface AppSettings {
@@ -75,12 +199,18 @@ export interface QaTask {
   report?: QaReport;
   aiPlan?: string;
   visionMode?: boolean;
+  mode?: AgentRunMode;
+  maxSteps?: number;
+  allowEscalation?: boolean;
 }
 
 export interface QaTaskInput {
   name: string;
   targetUrl: string;
   visionMode?: boolean;
+  mode?: AgentRunMode;
+  maxSteps?: number;
+  allowEscalation?: boolean;
 }
 
 export interface QaTaskUpdate {
@@ -88,6 +218,9 @@ export interface QaTaskUpdate {
   targetUrl?: string;
   status?: TaskStatus;
   visionMode?: boolean;
+  mode?: AgentRunMode;
+  maxSteps?: number;
+  allowEscalation?: boolean;
 }
 
 // ─── QA Report ─────────────────────────────────────────────────────────────

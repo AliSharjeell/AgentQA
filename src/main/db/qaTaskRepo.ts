@@ -52,6 +52,9 @@ export function createTask(input: QaTaskInput): QaTask {
     status: "todo",
     steps: [],
     visionMode: input.visionMode,
+    mode: input.mode || "standard",
+    maxSteps: input.maxSteps,
+    allowEscalation: input.allowEscalation,
     createdAt: now,
     updatedAt: now
   };
@@ -71,6 +74,9 @@ export function updateTask(id: string, update: QaTaskUpdate): QaTask {
   if (update.targetUrl !== undefined) task.targetUrl = update.targetUrl.trim();
   if (update.status !== undefined) task.status = update.status;
   if (update.visionMode !== undefined) task.visionMode = update.visionMode;
+  if (update.mode !== undefined) task.mode = update.mode;
+  if (update.maxSteps !== undefined) task.maxSteps = update.maxSteps;
+  if (update.allowEscalation !== undefined) task.allowEscalation = update.allowEscalation;
   task.updatedAt = timestamp();
   saveStore();
   return { ...task };

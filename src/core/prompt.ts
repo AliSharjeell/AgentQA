@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { AgentExecutorKind, AgentRunMode } from '../shared/types';
 import type { PageObservation, QaFault } from './harness';
 
 export interface AgentPlanStep {
@@ -31,6 +32,9 @@ export interface PromptInput {
   resetDirective: string | null;
   faults: QaFault[];
   visionMode?: boolean;
+  mode?: AgentRunMode;
+  currentExecutor?: AgentExecutorKind;
+  allowEscalation?: boolean;
 }
 
 function getCoreBehaviourRules(): string {
@@ -104,6 +108,9 @@ Task: ${input.taskName}
 Target URL: ${input.targetUrl}
 Current URL: ${input.currentUrl}
 Current title: ${input.observation.page.title || ''}
+Run mode: ${input.mode || 'standard'}
+Current executor: ${input.currentExecutor || 'standard-cdp'}
+Executor escalation allowed: ${input.allowEscalation ? 'yes' : 'no'}
 Last action result: ${input.lastActionResult || 'None'}
 
 Current plan:
@@ -143,6 +150,7 @@ Action protocol:
 - wait: use seconds, max 10.
 - navigate: use only to follow an actual intended URL, never to restart the same flow after failure.
 - batch: 2 to 5 deterministic sub-actions in one browser turn. Use only when confidence is 0.90 or higher, such as filling a visible login form then clicking its visible submit button, filling a checkout form then continuing, or clicking several visible known product add buttons. Do not batch steps that require observing changed DOM between them.
+- request_executor_switch: use only when the current executor is objectively blocked. Set value to "standard-cdp", "browser-use", or "browser-harness-dev". The orchestrator may deny the request.
 - finish_task: only when PASS/FAIL/AGENT_FAILED/INFRA_FAILED report is ready.
 - fail_task: when you must stop with a non-PASS report.
 
@@ -151,6 +159,8 @@ Important:
 - If the task contains a numbered checklist, every numbered item must be completed or explicitly failed before PASS.
 - Do not restart the task from the beginning when stuck.
 - Prefer a high-confidence batch for obvious forms with all required fields and submit button visible. Include "confidence": 0.90 or higher. If not that certain, use one action.
+- Do not keep scrolling as a search strategy. After two scrolls without finding a useful visible target, choose a different tactic or fail with evidence.
+- Do not ask to switch executors unless recent action results show repeated failures or an executor limitation.
 - If an element is missing, scroll/read/wait or choose another visible element.
 - If selecting product options, choose the required base/default option from current DOM text and verify selection before add-to-cart.
 - Keep a QA fault log. A failed automation action is not automatically a site bug.
@@ -165,7 +175,7 @@ Return exactly this JSON shape:
     { "step": 2, "description": "Current work", "status": "CURRENT" }
   ],
   "activePhase": {
-    "action": "click | type | read | scroll | wait | navigate | batch | finish_task | fail_task",
+    "action": "click | type | read | scroll | wait | navigate | batch | request_executor_switch | finish_task | fail_task",
     "targetId": "elem_0 when needed",
     "value": "text when needed",
     "url": "url when action is navigate",

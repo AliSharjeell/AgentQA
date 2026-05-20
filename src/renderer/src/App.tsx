@@ -33,7 +33,8 @@ import type {
   QaTaskInput,
   QaReport,
   BrowserState,
-  AppProgressEvent
+  AppProgressEvent,
+  AgentRunMode
 } from "../../shared/types";
 
 type Page = "main" | "settings";
@@ -250,6 +251,8 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
   const [showUrlHint, setShowUrlHint] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [mode, setMode] = useState<AgentRunMode>("standard");
+  const [allowEscalation, setAllowEscalation] = useState(false);
 
   const handleCreateTask = useCallback(async () => {
     if (!inputName.trim() || !window.qaApi) return;
@@ -264,7 +267,9 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     try {
       const task = await window.qaApi.createTask({
         name: inputName.trim(),
-        targetUrl: browserUrl
+        targetUrl: browserUrl,
+        mode,
+        allowEscalation
       });
       setTasks((prev) => [task, ...prev]);
       onSelectTask(task.id);
@@ -273,7 +278,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     } finally {
       setCreating(false);
     }
-  }, [inputName, browserUrl, onSelectTask, onRefresh, setTasks]);
+  }, [inputName, browserUrl, mode, allowEscalation, onSelectTask, onRefresh, setTasks]);
 
   return (
     <div className="window-no-drag mt-4 flex flex-1 flex-col overflow-hidden">
@@ -306,6 +311,27 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
 
       {/* New task chat-style input (pinned to bottom) */}
       <div className="mt-auto pt-3 border-t border-white/5 space-y-1.5">
+        <div className="grid grid-cols-[1fr_auto] gap-2 px-1">
+          <select
+            className="h-8 rounded-lg border border-white/5 bg-white/5 px-2 text-[11px] text-zinc-300 outline-none focus:border-white/10"
+            value={mode}
+            onChange={(e) => setMode(e.target.value as AgentRunMode)}
+            title="Automation Mode"
+          >
+            <option value="standard">Standard</option>
+            <option value="browser-use">Browser-use</option>
+            <option value="advanced">Advanced</option>
+          </select>
+          <label className="flex h-8 items-center gap-1.5 rounded-lg border border-white/5 bg-white/5 px-2 text-[10px] text-zinc-400">
+            <input
+              type="checkbox"
+              checked={allowEscalation}
+              onChange={(e) => setAllowEscalation(e.target.checked)}
+              className="rounded border-white/10 bg-white/5 accent-zinc-500"
+            />
+            Escalate
+          </label>
+        </div>
         <div className="relative flex items-center">
           <input
             className={`h-9 w-full rounded-full border border-white/5 bg-white/5 pl-4 pr-10 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/10${urlError ? " border-red-500/50" : ""}`}

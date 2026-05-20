@@ -20,6 +20,8 @@
  *   --verbose    Print step progress to stderr
  *   --timeout    Max seconds (default: 120)
  *   --mode       Testing mode: text | vision (default: text)
+ *   --agent-mode Harness mode: standard | browser-use | advanced (default: standard)
+ *   --max-steps  Maximum agent loop steps (default: 25)
  *   --json       Output result as JSON instead of text report
  *
  * Output:
@@ -34,7 +36,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { loadSettings, saveSettings } from "../core/settings";
 import { runQaTask } from "../core/engine";
-import type { AppSettings, ApiProvider } from "../shared/types";
+import type { AgentRunMode, AppSettings, ApiProvider } from "../shared/types";
 
 // ─── Argument Parser ─────────────────────────────────────────────────────────
 
@@ -66,7 +68,9 @@ function parseArgs(argv: string[]): ParsedArgs {
        arg === "--api-key" ||
        arg === "--model" ||
        arg === "--timeout" ||
+       arg === "--max-steps" ||
        arg === "--mode" ||
+       arg === "--agent-mode" ||
        arg === "--api-base-url" ||
        arg === "--base-url") &&
       i + 1 < argv.length
@@ -97,6 +101,19 @@ function logStep(instruction: string, status: string, detail?: string): void {
   const icon = status === "done" ? "✓" : status === "failed" ? "✗" : "⋯";
   const suffix = detail ? ` — ${detail}` : "";
   log(`  ${icon} ${instruction}${suffix}`);
+}
+
+function parseAgentMode(value: unknown): AgentRunMode {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "browser-use" || normalized === "browser_use" || normalized === "browseruse") return "browser-use";
+  if (normalized === "advanced" || normalized === "adv") return "advanced";
+  return "standard";
+}
+
+function parseBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 // ─── Interactive Wizard & App Launcher Helpers ───────────────────────────────
@@ -253,6 +270,9 @@ OPTIONS:
   --verbose    Print step progress to stderr
   --timeout    Max seconds per step (default: 120)
   --mode       Testing mode: text | vision (default: text)
+  --agent-mode Harness mode: standard | browser-use | advanced (default: standard)
+  --max-steps  Maximum agent loop steps (default: 25)
+  --allow-escalation Allow executor switch requests outside advanced mode
   --json       Output result as JSON instead of text report
 
 EXAMPLES:
@@ -378,6 +398,11 @@ EXAMPLES:
   }
 
   const timeoutMs = options.timeout ? parseInt(options.timeout as string, 10) * 1000 : 120000;
+  const agentMode = parseAgentMode(options["agent-mode"] || options.agentMode || (
+    ["standard", "browser-use", "advanced"].includes(String(options.mode || "").toLowerCase()) ? options.mode : undefined
+  ));
+  const maxSteps = options["max-steps"] ? parseInt(String(options["max-steps"]), 10) : undefined;
+  const allowEscalation = parseBoolean(options["allow-escalation"] || options.allowEscalation);
 
   if (verbose) {
     log(`\n=========================================`);
@@ -386,6 +411,7 @@ EXAMPLES:
     log(`\n🔍 QA Agent — ${url}`);
     log(`   Prompt: ${prompt}`);
     log(`   Provider: ${settings.apiProvider} / ${settings.model || "(default)"}`);
+    log(`   Mode: ${agentMode}${allowEscalation ? " + escalation" : ""}`);
     log("");
   }
 
@@ -394,6 +420,9 @@ EXAMPLES:
     prompt,
     settings,
     timeoutMs,
+    mode: agentMode,
+    maxSteps,
+    allowEscalation,
     visionMode: options.mode === "vision" || Boolean(options.vision) || settings.visionMode,
     onStep: verbose
       ? (event) => logStep(event.instruction, event.status, event.result || event.error)

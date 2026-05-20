@@ -1,9 +1,6 @@
-import type { AppSettings } from '../shared/types';
+import type { AgentExecutorKind, AgentRunMode, AppSettings } from '../shared/types';
 import { callForScript } from './api';
 import {
-  buildActionScript,
-  buildObservationScript,
-  runHarnessScript,
   type CliReport,
   type HarnessStepEvent,
   type ObservedElement,
@@ -11,6 +8,7 @@ import {
   type QaFault,
   type StructuredAction
 } from './harness';
+import { createAgentExecutor, isExecutorAvailable, type AgentExecutor } from './executor';
 import { buildPrompt, normalizeScript, type AgentHistoryEntry, type AgentPlanStep } from './prompt';
 
 export interface TaskStep {
@@ -38,10 +36,14 @@ export interface RunTaskOptions {
   onStep?: (event: HarnessStepEvent) => void;
   timeoutMs?: number;
   visionMode?: boolean;
+  mode?: AgentRunMode;
+  maxSteps?: number;
+  allowEscalation?: boolean;
 }
 
 type FinishAction = 'finish_task' | 'fail_task';
-type AgentAction = StructuredAction | ({ action: FinishAction; reason?: string; description?: string });
+type SwitchAction = { action: 'request_executor_switch'; value?: string; reason?: string; description?: string };
+type AgentAction = StructuredAction | ({ action: FinishAction; reason?: string; description?: string }) | SwitchAction;
 
 interface AgentResponse {
   thought: string;
@@ -117,25 +119,29 @@ function extractJsonObject(raw: string): string {
 
 function parseAgentResponse(raw: string): AgentResponse {
   const json = extractJsonObject(raw);
-  const parsed = JSON.parse(json) as Partial<AgentResponse>;
-  if (!parsed.activePhase || typeof parsed.activePhase.action !== 'string') {
+  const parsed = JSON.parse(json) as Partial<AgentResponse> & { active_phase?: AgentAction };
+  const activePhase = parsed.activePhase || parsed.active_phase;
+  if (!activePhase || typeof activePhase.action !== 'string') {
     throw new Error(`Agent response missing activePhase.action: ${json}`);
   }
   return {
     thought: parsed.thought || '',
     plan: Array.isArray(parsed.plan) ? parsed.plan : [],
-    activePhase: parsed.activePhase,
+    activePhase,
     faults: Array.isArray(parsed.faults) ? parsed.faults : [],
     report: parsed.report || null
   };
 }
 
 function isStructuredAction(action: AgentAction): action is StructuredAction {
-  return !['finish_task', 'fail_task'].includes(action.action);
+  return !['finish_task', 'fail_task', 'request_executor_switch'].includes(action.action);
 }
 
 function describeAction(action: AgentAction, target?: ObservedElement | null): string {
-  if (!isStructuredAction(action)) return action.action === 'finish_task' ? 'Finish task' : 'Fail task';
+  if (!isStructuredAction(action)) {
+    if (action.action === 'request_executor_switch') return `Request executor switch to ${action.value || '(missing)'}`;
+    return action.action === 'finish_task' ? 'Finish task' : 'Fail task';
+  }
   if (action.action === 'batch') {
     const count = action.actions?.length || 0;
     return action.description || `batch ${count} actions`;
@@ -146,6 +152,9 @@ function describeAction(action: AgentAction, target?: ObservedElement | null): s
 }
 
 function actionSignature(action: AgentAction): string {
+  if (!isStructuredAction(action)) {
+    return [action.action, 'value' in action ? action.value || '' : ''].join('|');
+  }
   if (isStructuredAction(action) && action.action === 'batch') {
     return [
       'batch',
@@ -315,8 +324,50 @@ function objectiveCoverageCount(report: CliReport | null | undefined, plan: Agen
   );
 }
 
+function normalizeExecutorTarget(value: string | undefined): AgentExecutorKind | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'standard' || normalized === 'standard-cdp' || normalized === 'cdp') return 'standard-cdp';
+  if (normalized === 'browser-use' || normalized === 'browser_use' || normalized === 'browseruse') return 'browser-use';
+  if (normalized === 'advanced' || normalized === 'browser-harness-dev' || normalized === 'browser_harness_dev') return 'browser-harness-dev';
+  return null;
+}
+
+function recentFailureCount(history: AgentHistoryEntry[]): number {
+  return history
+    .slice(-6)
+    .filter((entry) => entry.status === 'failed' || entry.status === 'blocked')
+    .length;
+}
+
+function decideExecutorSwitch(input: {
+  mode: AgentRunMode;
+  allowEscalation: boolean;
+  current: AgentExecutorKind;
+  target: AgentExecutorKind | null;
+  history: AgentHistoryEntry[];
+}): { approved: boolean; target?: AgentExecutorKind; message: string } {
+  if (!input.target) {
+    return { approved: false, message: 'Executor switch denied: requested executor is missing or unknown.' };
+  }
+  if (input.target === input.current) {
+    return { approved: false, message: `Executor switch denied: already using ${input.current}.` };
+  }
+  if (!isExecutorAvailable(input.target)) {
+    return { approved: false, message: `Executor switch denied: ${input.target} is not installed or wired in this build.` };
+  }
+  if (input.target === 'browser-harness-dev' && input.mode !== 'advanced' && !input.allowEscalation) {
+    return { approved: false, message: 'Executor switch denied: browser-harness-dev requires advanced mode or allowEscalation.' };
+  }
+  if (input.target !== 'standard-cdp' && recentFailureCount(input.history) < 2) {
+    return { approved: false, message: 'Executor switch denied: not enough recent failed/blocked actions to justify escalation.' };
+  }
+  return { approved: true, target: input.target, message: `Executor switch approved: ${input.current} -> ${input.target}.` };
+}
+
 export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   const { targetUrl, prompt, settings, cdpUrl, timeoutMs = 120000 } = options;
+  const mode: AgentRunMode = options.mode || 'standard';
+  const allowEscalation = Boolean(options.allowEscalation);
   const onStep = options.onStep || (() => {});
   const steps: TaskStep[] = [];
   const startTime = Date.now();
@@ -373,39 +424,50 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   let blockedActionSignature: string | null = null;
   let resetDirective: string | null = null;
   let parseFailures = 0;
-  const maxSteps = 40;
+  let scrollStreak = 0;
+  let blockedScrollAttempts = 0;
+  const maxSteps = options.maxSteps && options.maxSteps > 0 ? options.maxSteps : 25;
   const numberedObjectiveCount = countNumberedObjectives(prompt);
+  const executorStepHandler = (event: HarnessStepEvent): void => {
+    onStep(event);
+    addStep(event.instruction, event.status as TaskStep['status'], event.result, event.error);
+  };
+  let executor: AgentExecutor = createAgentExecutor({
+    mode,
+    targetUrl,
+    cdpUrl,
+    timeoutMs,
+    onStep: executorStepHandler
+  });
+  await executor.startSession({ targetUrl, mode, cdpUrl, timeoutMs });
 
   addStep(`Open and inspect ${targetUrl}`, 'running');
   onStep({ instruction: `Open and inspect ${targetUrl}`, status: 'running' });
 
-  const initial = await runHarnessScript(buildObservationScript(targetUrl, true), (event) => {
-    onStep(event);
-    addStep(event.instruction, event.status as TaskStep['status'], event.result, event.error);
-  }, cdpUrl, timeoutMs);
+  const initial = await executor.openUrl(targetUrl);
 
   if (!initial.ok) {
     const report = makeReport({
       result: 'INFRA_FAILED',
       scenario: prompt,
-      summary: initial.error || initial.summary,
+      summary: initial.message,
       finalUrl: targetUrl,
       history,
       faults: [{
         severity: 'critical',
         type: 'infra',
         title: 'Initial browser observation failed',
-        details: initial.error || initial.summary,
-        evidence: [initial.summary, initial.error || ''],
+        details: initial.message,
+        evidence: [initial.message],
         url: targetUrl,
         step: 'initial observation'
       }],
-      evidence: [initial.error || initial.summary]
+      evidence: [initial.message]
     });
     return finishWithReport(report, 'Initial browser observation failed.', targetUrl);
   }
 
-  observation = parseObservation(initial.summary, targetUrl);
+  observation = initial.observation;
   currentUrl = observation.page.url || targetUrl;
   faults = addConsoleFaults(faults, observation, 'initial observation');
   lastActionResult = `Loaded ${currentUrl}`;
@@ -425,7 +487,10 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       blockedActionSignature,
       resetDirective,
       faults,
-      visionMode: options.visionMode
+      visionMode: options.visionMode,
+      mode,
+      currentExecutor: executor.kind,
+      allowEscalation
     });
 
     let parsed: AgentResponse;
@@ -495,6 +560,47 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       return finishWithReport(report, parsed.thought || report.evidence[0] || report.result, currentUrl);
     }
 
+    if (action.action === 'request_executor_switch') {
+      const targetKind = normalizeExecutorTarget(action.value);
+      const decision = decideExecutorSwitch({
+        mode,
+        allowEscalation,
+        current: executor.kind,
+        target: targetKind,
+        history
+      });
+      const previousKind = executor.kind;
+      if (!decision.approved || !decision.target) {
+        history.push({ step: stepNum, action: action.action, value: action.value || '', status: 'blocked', result: decision.message, url: currentUrl });
+        lastActionResult = decision.message;
+        resetDirective = `Executor switch was denied by policy. Continue with ${executor.kind}, choose a different safe action, or fail with evidence.`;
+        continue;
+      }
+
+      await executor.stopSession();
+      executor = createAgentExecutor({
+        kind: decision.target,
+        mode,
+        targetUrl,
+        cdpUrl,
+        timeoutMs,
+        onStep: executorStepHandler
+      });
+      await executor.startSession({ targetUrl, mode, cdpUrl, timeoutMs });
+      const switchedObservation = await executor.observe();
+      if (switchedObservation.ok) {
+        observation = switchedObservation.observation;
+        currentUrl = observation.page.url || currentUrl;
+      }
+      const result = switchedObservation.ok
+        ? `${decision.message} Re-observed current page with ${decision.target}.`
+        : `${decision.message} Re-observe failed after switch: ${switchedObservation.message}`;
+      history.push({ step: stepNum, action: action.action, value: `${previousKind}->${decision.target}`, status: switchedObservation.ok ? 'success' : 'failed', result, url: currentUrl });
+      lastActionResult = result;
+      resetDirective = null;
+      continue;
+    }
+
     if (!isStructuredAction(action)) {
       const result = `Unsupported terminal action without report: ${action.action}`;
       history.push({ step: stepNum, action: action.action, status: 'failed', result, url: currentUrl });
@@ -512,6 +618,28 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     }
 
     const signature = actionSignature(action);
+    if (action.action === 'scroll' && scrollStreak >= 2) {
+      blockedScrollAttempts++;
+      const result = `Blocked scroll loop: already scrolled ${scrollStreak} times without a click, type, or navigation changing tactics.`;
+      history.push({ step: stepNum, action: action.action, value: String(action.dy ?? ''), status: 'blocked', result, url: currentUrl });
+      lastActionResult = result;
+      resetDirective = `Stop scrolling. You have already used scrolling repeatedly. Choose a visible link/control, navigate to a specific forward URL if justified by the task, read/verify visible state, or fail with evidence. Do not restart from the beginning.`;
+      if (blockedScrollAttempts >= 2) {
+        const report = makeReport({
+          result: 'AGENT_FAILED',
+          scenario: prompt,
+          summary: 'Agent got stuck scrolling and could not find a reliable next action.',
+          finalUrl: currentUrl,
+          history,
+          faults,
+          evidence: [result, observation.pageText.slice(0, 500)],
+          consoleErrors: observation.consoleErrors
+        });
+        return finishWithReport(report, 'Agent got stuck scrolling.', currentUrl);
+      }
+      continue;
+    }
+
     if (blockedActionSignature && signature === blockedActionSignature) {
       const result = `Blocked repeated action: ${signature}`;
       history.push({ step: stepNum, action: action.action, targetId: 'targetId' in action ? action.targetId : undefined, status: 'blocked', result, url: currentUrl });
@@ -559,26 +687,16 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     addStep(actionDescription, 'running');
     onStep({ instruction: actionDescription, status: 'running' });
 
-    const result = await runHarnessScript(buildActionScript(executableAction, target, targetUrl), (event) => {
-      onStep(event);
-      addStep(event.instruction, event.status as TaskStep['status'], event.result, event.error);
-    }, cdpUrl, timeoutMs);
+    const result = await executor.execute(executableAction, target);
 
-    const parsedObservation = parseObservation(result.summary, targetUrl);
+    const parsedObservation = result.observation;
     if (parsedObservation.page.url || parsedObservation.availableElements.length || parsedObservation.pageText) {
       observation = parsedObservation;
       currentUrl = observation.page.url || currentUrl;
       faults = addConsoleFaults(faults, observation, actionDescription);
     }
 
-    const actionResult = (() => {
-      try {
-        const summary = JSON.parse(result.summary) as { actionResult?: string };
-        return summary.actionResult || result.summary;
-      } catch {
-        return result.error || result.summary;
-      }
-    })();
+    const actionResult = result.actionResult || result.message;
 
     history.push({
       step: stepNum,
@@ -593,6 +711,12 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     lastActionResult = result.ok ? actionResult : `Action failed: ${actionResult}`;
     if (result.ok) {
+      if (action.action === 'scroll') {
+        scrollStreak++;
+      } else if (['click', 'type', 'navigate', 'batch'].includes(action.action)) {
+        scrollStreak = 0;
+        blockedScrollAttempts = 0;
+      }
       resetDirective = null;
       if (signature !== blockedActionSignature) blockedActionSignature = null;
     } else {

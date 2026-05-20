@@ -74,6 +74,10 @@ export interface PageObservation {
     title?: string;
     w?: number;
     h?: number;
+    sx?: number;
+    sy?: number;
+    pw?: number;
+    ph?: number;
   };
   availableElements: ObservedElement[];
   interactiveElements: ObservedElement[];
@@ -689,7 +693,9 @@ def execute_one(item):
     elif kind == "scroll":
         dy = int(item.get("dy") or -650)
         scroll(500, 500, dy=dy)
-        result = "Scrolled by " + str(dy)
+        scroll_y = js("Math.round(window.scrollY || document.documentElement.scrollTop || 0)")
+        page_h = js("Math.round(document.documentElement.scrollHeight || document.body.scrollHeight || 0)")
+        result = "Scrolled by " + str(dy) + " to y=" + str(scroll_y) + " of " + str(page_h)
     elif kind == "wait":
         seconds = float(item.get("seconds") or 1)
         if seconds < 0:
