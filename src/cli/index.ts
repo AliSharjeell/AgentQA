@@ -210,9 +210,14 @@ async function main(): Promise<void> {
 
   const SUBCOMMANDS = new Set(["run", "config", "app", "help"]);
 
-  // Show help if no arguments or help requested
   if (!command && Object.keys(options).length === 0 || command === "help" || command === "--help" || options.help) {
-    log(`
+    log(`\x1b[36m\x1b[1m    ___                         __  ____  ___  
+   /   |  ____ ____  ____  / /_/ __ \\/   | 
+  / /| | / __ \`/ _ \\/ __ \\/ __/ / / / /| | 
+ / ___ |/ /_/ /  __/ / / / /_/ /_/ / ___ | 
+/_/  |_|\\__, /\\___/_/ /_/\\__/\\___\\_/_/  |_|
+       /____/                              \x1b[0m
+
 agentqa by Ali Sharjeel — Headless QA automation for coding agents & CI/CD
 
 USAGE:
