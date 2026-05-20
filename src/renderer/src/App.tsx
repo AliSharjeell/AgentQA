@@ -250,6 +250,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
   const [showUrlHint, setShowUrlHint] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [visionMode, setVisionMode] = useState(false);
 
   const handleCreateTask = useCallback(async () => {
     if (!inputName.trim() || !window.qaApi) return;
@@ -264,7 +265,8 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     try {
       const task = await window.qaApi.createTask({
         name: inputName.trim(),
-        targetUrl: browserUrl
+        targetUrl: browserUrl,
+        visionMode
       });
       setTasks((prev) => [task, ...prev]);
       onSelectTask(task.id);
@@ -331,6 +333,18 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
         {urlError && (
           <p className="text-[10px] text-red-400 px-2">{urlError}</p>
         )}
+        <div className="flex items-center gap-2 px-2 pb-1">
+          <input
+            type="checkbox"
+            id="visionMode"
+            checked={visionMode}
+            onChange={(e) => setVisionMode(e.target.checked)}
+            className="rounded border-white/10 bg-white/5 accent-zinc-500 cursor-pointer"
+          />
+          <label htmlFor="visionMode" className="text-[10px] text-zinc-400 select-none cursor-pointer hover:text-zinc-300 transition-colors">
+            Enable Vision Mode (Multimodal LLM required)
+          </label>
+        </div>
       </div>
     </div>
   );

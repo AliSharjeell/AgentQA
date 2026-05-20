@@ -27,6 +27,7 @@ export interface RunTaskOptions {
   cdpUrl?: string;           // If provided, connects to existing Chrome. Otherwise browser-harness uses its own daemon.
   onStep?: (event: HarnessStepEvent) => void;
   timeoutMs?: number;
+  visionMode?: boolean;
 }
 
 export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
@@ -78,7 +79,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       addStep(`Plan browser actions (attempt ${attempt})`, 'running');
       onStep({ instruction: `Plan browser actions (attempt ${attempt})`, status: 'running' });
 
-      const fullPrompt = buildPrompt(prompt, targetUrl, observation, previousFailure, attempt);
+      const fullPrompt = buildPrompt(prompt, targetUrl, observation, previousFailure, attempt, options.visionMode);
       const rawScript = await callForScript(settings, fullPrompt);
       const script = normalizeScript(rawScript);
 

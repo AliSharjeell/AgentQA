@@ -66,6 +66,7 @@ Options:
   --provider   API provider: openai | anthropic (default: from settings)
   --api-key    API key (default: from settings or $QA_API_KEY)
   --model      Model name (default: from settings)
+  --mode       Testing mode: text | vision (default: text)
   --verbose    Print step progress to stderr
   --timeout    Max seconds (default: 120)
 ```

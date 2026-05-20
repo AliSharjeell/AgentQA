@@ -101,6 +101,7 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
       prompt: task.name,
       settings,
       cdpUrl: `http://127.0.0.1:${PREVIEW_DEBUG_PORT}`,
+      visionMode: task.visionMode,
       onStep: (event: HarnessStepEvent) => {
         if (event.status === "running") {
           const lastStep = steps[steps.length - 1];

@@ -51,6 +51,7 @@ export function createTask(input: QaTaskInput): QaTask {
     targetUrl: input.targetUrl.trim(),
     status: "todo",
     steps: [],
+    visionMode: input.visionMode,
     createdAt: now,
     updatedAt: now
   };
@@ -69,6 +70,7 @@ export function updateTask(id: string, update: QaTaskUpdate): QaTask {
   if (update.name !== undefined) task.name = update.name.trim();
   if (update.targetUrl !== undefined) task.targetUrl = update.targetUrl.trim();
   if (update.status !== undefined) task.status = update.status;
+  if (update.visionMode !== undefined) task.visionMode = update.visionMode;
   task.updatedAt = timestamp();
   saveStore();
   return { ...task };

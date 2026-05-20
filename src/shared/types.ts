@@ -73,17 +73,20 @@ export interface QaTask {
   completedAt?: string;
   report?: QaReport;
   aiPlan?: string;
+  visionMode?: boolean;
 }
 
 export interface QaTaskInput {
   name: string;
   targetUrl: string;
+  visionMode?: boolean;
 }
 
 export interface QaTaskUpdate {
   name?: string;
   targetUrl?: string;
   status?: TaskStatus;
+  visionMode?: boolean;
 }
 
 // ─── QA Report ─────────────────────────────────────────────────────────────

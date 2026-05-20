@@ -3,8 +3,22 @@ export function buildPrompt(
   targetUrl: string,
   observation: string,
   previousFailure: string,
-  attempt: number
+  attempt: number,
+  visionMode: boolean = false
 ): string {
+  const visionRules = visionMode 
+    ? `- VISION MODE ENABLED: You MUST visually verify images, layout, and visual bugs. If product images are broken or repeated, or if layout is broken, report it as a CONFIRMED BUG and fail the test.
+- Best result logic:
+  * PASS = test objective completed and no confirmed bugs. PASS is only allowed if all required checks are verified with DOM/page or visual evidence.
+  * FAIL = confirmed website/app bug found. If a confirmed bug exists (including visual bugs), report as CONFIRMED BUG and the final RESULT must be FAIL.
+  * INFRA_FAILED = browser/tool/navigation/timeout failure. If URL becomes chrome-error://chromewebdata or a timeout occurs, report as INFRA_FAILED, not a website bug.`
+    : `- If a bug requires visual comparison or screenshot interpretation (e.g. broken product images, repeated placeholder images, visual layout issues, image mismatch bugs), do NOT mark it as FAIL. Instead, add to your report warnings: "WARNING: Visual check skipped because current model is text-only."
+- You should only verify evidence available through: page URL, DOM text, form values, button text, cart item names, validation messages, page headings, and console/network errors.
+- Best result logic:
+  * PASS = test objective completed and no confirmed bugs. PASS is only allowed if all required checks are verified with DOM/page evidence.
+  * FAIL = confirmed website/app bug found. If a confirmed bug exists (e.g. selected cart items do not match the clicked products, validation message is missing), report as CONFIRMED BUG and the final RESULT must be FAIL.
+  * INFRA_FAILED = browser/tool/navigation/timeout failure. If URL becomes chrome-error://chromewebdata or a timeout occurs, report as INFRA_FAILED, not a website bug.`;
+
   return `You are generating Python code for browser-harness, a CDP browser automation harness.
 The code will be piped directly to the browser-harness CLI via stdin and will control the already-visible live preview browser.
 IMPORTANT: A helper function set_value(selector, text) is already defined for you in the preamble. Use it for ALL form inputs.
@@ -103,12 +117,7 @@ Agent Instructions:
 - After submitting forms, wait_for_load() + time.sleep(1) + verify with page_info().
 - Never report a bug unless verified twice after waiting and scrolling. For dynamic loading, use loops and time.sleep() to wait. Do not mark slow loading as a bug if it eventually loads.
 - A scenario can complete successfully but still be FAIL if confirmed bugs are found.
-- If a bug requires visual comparison or screenshot interpretation (e.g. broken product images, repeated placeholder images, visual layout issues, image mismatch bugs), do NOT mark it as FAIL. Instead, add to your report warnings: "WARNING: Visual check skipped because current model is text-only."
-- You should only verify evidence available through: page URL, DOM text, form values, button text, cart item names, validation messages, page headings, and console/network errors.
-- Best result logic:
-  * PASS = test objective completed and no confirmed bugs. PASS is only allowed if all required checks are verified with DOM/page evidence.
-  * FAIL = confirmed website/app bug found. If a confirmed bug exists (e.g. selected cart items do not match the clicked products, validation message is missing), report as CONFIRMED BUG and the final RESULT must be FAIL.
-  * INFRA_FAILED = browser/tool/navigation/timeout failure. If URL becomes chrome-error://chromewebdata or a timeout occurs, report as INFRA_FAILED, not a website bug.
+${visionRules}
 - If no bugs are found after thorough testing, write "No confirmed bugs found." in the summary and the report result should be PASS. Do NOT invent or speculate about issues that were not actually observed. Do NOT report expected validation errors (like invalid login prompts) as bugs.
 - Wrap everything in try/except.
 

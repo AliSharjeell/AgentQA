@@ -39,6 +39,8 @@ function parseArgs(argv: string[]): Record<string, string | boolean> {
     } else if (arg.startsWith("--") && i + 1 < argv.length) {
       const key = arg.slice(2);
       result[key] = argv[++i];
+    } else if (arg === "--mode" && i + 1 < argv.length) {
+      result.mode = argv[++i];
     } else if (!result._command) {
       result._command = arg;
     }
@@ -80,6 +82,7 @@ OPTIONS:
   --verbose    Print step progress to stderr
   --timeout    Max seconds per step (default: 120)
   --json       Output result as JSON instead of text report
+  --mode       Testing mode: text | vision (default: text)
 
 OUTPUT:
   stdout → Text-based QA report (or JSON if --json is passed)
@@ -131,6 +134,7 @@ OUTPUT:
     prompt,
     settings,
     timeoutMs,
+    visionMode: args.mode === "vision",
     onStep: verbose
       ? (event) => logStep(event.instruction, event.status, event.result || event.error)
       : undefined
