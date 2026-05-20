@@ -13,6 +13,18 @@ AI-powered QA testing tool that explores websites, fills forms, clicks buttons, 
 | **Output** | Interactive UI with step progress | Structured JSON to stdout |
 | **AI** | OpenAI / Anthropic (configurable) | Same — uses shared settings |
 
+## Compatibility & Requirements
+
+### Supported Operating Systems
+- **Windows (10/11)**: Full desktop support (packaged installer) and CLI compatibility.
+- **macOS (Apple Silicon & Intel)**: Full desktop support (packaged installer) and CLI compatibility.
+- **Linux (Ubuntu, Debian, etc.)**: CLI compatibility and AppImage packaging (optimized for headless CI/CD).
+
+### Supported Web Applications
+AgentQA operates directly on the DOM, making it compatible with any website or single-page application (SPA), including:
+- **Frontend Frameworks**: React, Vue, Angular, Svelte, SolidJS, Next.js, Nuxt, Astro, and vanilla HTML/JS.
+- **Modern UI Elements**: Dynamic forms, multi-select dropdowns, modal windows, iframes, multi-page redirects, and asynchronous state updates.
+
 ---
 
 ## Quick Start
