@@ -66,7 +66,9 @@ function parseArgs(argv: string[]): ParsedArgs {
        arg === "--api-key" ||
        arg === "--model" ||
        arg === "--timeout" ||
-       arg === "--mode") &&
+       arg === "--mode" ||
+       arg === "--api-base-url" ||
+       arg === "--base-url") &&
       i + 1 < argv.length
     ) {
       const key = arg.slice(2);
@@ -134,6 +136,13 @@ async function runConfigWizard(): Promise<void> {
   const apiKeyInput = await askQuestion(apiKeyPrompt);
   const apiKey = apiKeyInput || current.apiKey || "";
 
+  const currentBaseUrl = current.apiBaseUrl || "none";
+  const baseUrlInput = await askQuestion(`API Base URL override (currently ${currentBaseUrl}): `);
+  let apiBaseUrl = current.apiBaseUrl || "";
+  if (baseUrlInput) {
+    apiBaseUrl = baseUrlInput.toLowerCase() === "none" ? "" : baseUrlInput;
+  }
+
   const defaultModel = provider === "openai" ? "gpt-4.1-mini" : "claude-sonnet-4-20250514";
   const currentModel = current.model || defaultModel;
   const modelInput = await askQuestion(`Model (${currentModel}): `);
@@ -150,7 +159,7 @@ async function runConfigWizard(): Promise<void> {
   const updated: AppSettings = {
     apiProvider: provider,
     apiKey,
-    apiBaseUrl: current.apiBaseUrl,
+    apiBaseUrl,
     model,
     visionMode
   };
@@ -160,6 +169,7 @@ async function runConfigWizard(): Promise<void> {
   console.log(JSON.stringify({
     apiProvider: provider,
     apiKey: apiKey ? "******" + apiKey.slice(-4) : "",
+    apiBaseUrl: apiBaseUrl || undefined,
     model,
     visionMode
   }, null, 2));
@@ -224,7 +234,7 @@ USAGE:
   agentqa run --url <URL> --prompt <PROMPT> [options]
   agentqa run <URL> <PROMPT> [options]
   agentqa <URL> <PROMPT> [options]
-  agentqa config [--provider <p>] [--api-key <k>] [--model <m>] [--vision <on|off>]
+  agentqa config [--provider <p>] [--api-key <k>] [--base-url <u>] [--model <m>] [--vision <on|off>]
   agentqa app
 
 SUBCOMMANDS:
@@ -238,6 +248,7 @@ OPTIONS:
   --prompt     QA task description
   --provider   API provider: openai | anthropic (default: from settings)
   --api-key    API key (default: from settings or $QA_API_KEY)
+  --base-url   API base URL override (default: from settings or $QA_API_URL)
   --model      Model name (default: from settings)
   --verbose    Print step progress to stderr
   --timeout    Max seconds per step (default: 120)
@@ -258,11 +269,12 @@ EXAMPLES:
     const apiKeyVal = options["api-key"] || options.apiKey;
     const modelVal = options.model;
     const visionVal = options.vision !== undefined ? options.vision : options.visionMode;
+    const baseUrlVal = options["api-base-url"] || options["base-url"] || options.apiBaseUrl;
 
     const fileSettings = loadSettings();
 
     // Check if any CLI options were provided to config command
-    if (providerVal || apiKeyVal || modelVal || visionVal !== undefined) {
+    if (providerVal || apiKeyVal || modelVal || visionVal !== undefined || baseUrlVal !== undefined) {
       let visionMode: boolean | undefined;
       if (visionVal !== undefined) {
         if (typeof visionVal === "boolean") {
@@ -277,6 +289,7 @@ EXAMPLES:
         ...fileSettings,
         apiProvider: (providerVal ? String(providerVal) : fileSettings.apiProvider) as ApiProvider,
         apiKey: apiKeyVal ? String(apiKeyVal) : fileSettings.apiKey,
+        apiBaseUrl: baseUrlVal !== undefined ? String(baseUrlVal) : fileSettings.apiBaseUrl,
         model: modelVal ? String(modelVal) : fileSettings.model,
         visionMode: visionMode !== undefined ? visionMode : fileSettings.visionMode
       };
@@ -286,6 +299,7 @@ EXAMPLES:
       console.log(JSON.stringify({
         apiProvider: updated.apiProvider,
         apiKey: updated.apiKey ? "******" + updated.apiKey.slice(-4) : "",
+        apiBaseUrl: updated.apiBaseUrl || undefined,
         model: updated.model,
         visionMode: updated.visionMode
       }, null, 2));
@@ -353,7 +367,7 @@ EXAMPLES:
   const settings: AppSettings = {
     apiProvider: (options.provider as ApiProvider) || (process.env.QA_API_PROVIDER as ApiProvider) || fileSettings.apiProvider || "anthropic",
     apiKey: (options["api-key"] as string) || process.env.QA_API_KEY || fileSettings.apiKey || "",
-    apiBaseUrl: process.env.QA_API_URL || fileSettings.apiBaseUrl || "",
+    apiBaseUrl: (options["api-base-url"] as string) || (options["base-url"] as string) || process.env.QA_API_URL || fileSettings.apiBaseUrl || "",
     model: (options.model as string) || process.env.QA_API_MODEL || fileSettings.model || "",
     visionMode: fileSettings.visionMode
   };
