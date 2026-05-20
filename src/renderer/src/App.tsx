@@ -390,51 +390,15 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
     >
       {active ? (
         <div className="flex flex-col px-3 pt-3 pb-2 space-y-2.5">
-          {/* Top row with Status and Controls */}
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <div className="flex items-center gap-2">
-              <StatusIcon status={task.status} size={14} />
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
-                {task.status === "running" ? "Running" : task.status === "paused" ? "Paused" : task.status === "done" ? "Completed" : task.status === "failed" ? "Failed" : "To Do"}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1 shrink-0">
-              {task.status === "todo" && (
-                <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStart(); }} title="Start">
-                  <Play size={11} />
-                </button>
-              )}
-              {isRunning && (
-                <>
-                  <button className="grid h-6 w-6 place-items-center rounded text-yellow-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onPause(); }} title="Pause">
-                    <Pause size={11} />
-                  </button>
-                  <button className="grid h-6 w-6 place-items-center rounded text-red-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStop(); }} title="Stop">
-                    <Square size={11} />
-                  </button>
-                </>
-              )}
-              {isPaused && (
-                <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onResume(); }} title="Resume">
-                  <Play size={11} />
-                </button>
-              )}
-              <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
-                <Trash2 size={11} />
-              </button>
-            </div>
-          </div>
-
           {/* Full width Prompt & URL */}
           <div
             className="w-full space-y-1 select-text cursor-default"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="break-words whitespace-normal select-text cursor-text text-xs font-medium leading-relaxed">
+            <p className="break-words whitespace-pre-wrap select-text cursor-text text-xs font-medium leading-relaxed">
               {task.name}
             </p>
-            <p className="break-all whitespace-normal select-text cursor-text text-[10px] text-zinc-400 leading-normal">
+            <p className="break-all whitespace-pre-wrap select-text cursor-text text-[10px] text-zinc-400 leading-normal">
               {task.targetUrl}
             </p>
           </div>
@@ -482,6 +446,42 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
           className="border-t border-white/5 px-3 py-2.5 space-y-2.5 text-zinc-400 text-xs select-text cursor-default"
           onClick={(e) => e.stopPropagation()}
         >
+          {/* Status and Controls at the top of the expanded tab */}
+          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+            <div className="flex items-center gap-2">
+              <StatusIcon status={task.status} size={14} />
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                {task.status === "running" ? "Running" : task.status === "paused" ? "Paused" : task.status === "done" ? "Completed" : task.status === "failed" ? "Failed" : "To Do"}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {task.status === "todo" && (
+                <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStart(); }} title="Start">
+                  <Play size={11} />
+                </button>
+              )}
+              {isRunning && (
+                <>
+                  <button className="grid h-6 w-6 place-items-center rounded text-yellow-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onPause(); }} title="Pause">
+                    <Pause size={11} />
+                  </button>
+                  <button className="grid h-6 w-6 place-items-center rounded text-red-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStop(); }} title="Stop">
+                    <Square size={11} />
+                  </button>
+                </>
+              )}
+              {isPaused && (
+                <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onResume(); }} title="Resume">
+                  <Play size={11} />
+                </button>
+              )}
+              <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
+                <Trash2 size={11} />
+              </button>
+            </div>
+          </div>
+
           {/* Natural language response block at the top */}
           {task.status === "running" && (
             <div className="flex items-center gap-2 py-0.5 select-none pl-1">
@@ -541,9 +541,9 @@ function StepRow({ step }: { step: QaTask["steps"][number] }): JSX.Element {
     <div className="flex items-start gap-2 py-0.5 select-text">
       <span className={`mt-0.5 shrink-0 select-none ${statusColor}`}>{statusIcon}</span>
       <div className="min-w-0 flex-1 select-text">
-        <p className={`text-[11px] select-text cursor-text ${step.status === "failed" ? "text-red-400" : "text-zinc-300"}`}>{step.instruction}</p>
-        {step.result && <p className="text-[10px] text-zinc-600 mt-0.5 truncate select-text cursor-text">{step.result}</p>}
-        {step.error && <p className="text-[10px] text-red-500 mt-0.5 select-text cursor-text">{step.error}</p>}
+        <p className={`text-[11px] select-text cursor-text break-words whitespace-pre-wrap ${step.status === "failed" ? "text-red-400" : "text-zinc-300"}`}>{step.instruction}</p>
+        {step.result && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result}</p>}
+        {step.error && <p className="text-[10px] text-red-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.error}</p>}
         {step.screenshotPath && <p className="text-[10px] text-indigo-400 mt-0.5 select-text">Screenshot saved</p>}
       </div>
     </div>
