@@ -1,10 +1,16 @@
+<h1 align="center">AgentQA</h1>
+
+<p align="center">
+  <img src="public/mainpic.png" alt="AgentQA" width="800" />
+</p>
+
+<p align="center">
+  AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a desktop app with live browser preview and as a headless CLI for coding agents.
+</p>
+
 <p align="center">
   <img src="public/demo.gif" alt="AgentQA Demo" width="800" />
 </p>
-
-<h1 align="center">AgentQA</h1>
-
-AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a **desktop app** with live browser preview and as a **headless CLI** for coding agents.
 
 ---
 
