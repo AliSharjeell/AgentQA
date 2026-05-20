@@ -18,7 +18,7 @@
  *   --timeout    Max seconds (default: 120)
  *
  * Output:
- *   stdout: JSON { ok, summary, steps[], durationMs, url, error }
+ *   stdout: Text-based QA report (or JSON if --json is used)
  *   stderr: step progress (when --verbose)
  *   exit:   0 = pass, 1 = fail
  */
@@ -34,6 +34,8 @@ function parseArgs(argv: string[]): Record<string, string | boolean> {
     const arg = argv[i];
     if (arg === "--verbose") {
       result.verbose = true;
+    } else if (arg === "--json") {
+      result.json = true;
     } else if (arg.startsWith("--") && i + 1 < argv.length) {
       const key = arg.slice(2);
       result[key] = argv[++i];
@@ -77,9 +79,10 @@ OPTIONS:
   --model      Model name (default: from settings)
   --verbose    Print step progress to stderr
   --timeout    Max seconds per step (default: 120)
+  --json       Output result as JSON instead of text report
 
 OUTPUT:
-  stdout → JSON { ok, summary, steps[], durationMs, url, error }
+  stdout → Text-based QA report (or JSON if --json is passed)
   exit 0 = pass, exit 1 = fail
 `);
     process.exit(0);
@@ -133,15 +136,37 @@ OUTPUT:
       : undefined
   });
 
-  // Output JSON result to stdout
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  const isJson = Boolean(args.json);
 
-  if (verbose) {
+  if (isJson) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  } else {
+    // Required final CLI report format
+    const r = result.report;
+    if (r) {
+      log("");
+      process.stdout.write(`RESULT: ${r.result}\n`);
+      process.stdout.write(`SCENARIO: ${r.scenario}\n`);
+      process.stdout.write(`CONFIRMED BUGS: ${r.confirmedBugs?.join(", ") || "None"}\n`);
+      process.stdout.write(`WARNINGS: ${r.warnings?.join(", ") || "None"}\n`);
+      process.stdout.write(`STEPS EXECUTED: ${r.stepsExecuted?.join(", ") || "None"}\n`);
+      process.stdout.write(`EVIDENCE: ${r.evidence?.join(", ") || "None"}\n`);
+      process.stdout.write(`FINAL URL: ${r.finalUrl || "Unknown"}\n`);
+      process.stdout.write(`SCREENSHOTS: ${r.screenshots?.join(", ") || "None"}\n`);
+      process.stdout.write(`CONSOLE ERRORS: ${r.consoleErrors?.join(", ") || "None"}\n`);
+      process.stdout.write(`FIX RECOMMENDATIONS: ${r.fixRecommendations?.join(", ") || "None"}\n`);
+    } else {
+      log("");
+      process.stdout.write(`RESULT: ${result.ok ? "PASS" : "FAIL"}\n`);
+      process.stdout.write(`SCENARIO: ${prompt}\n`);
+      process.stdout.write(`SUMMARY: ${result.summary}\n`);
+      if (result.error) process.stdout.write(`ERROR: ${result.error}\n`);
+    }
+  }
+
+  if (verbose && !isJson) {
     log("");
-    log(result.ok ? "✅ PASS" : "❌ FAIL");
-    log(`   ${result.summary}`);
     log(`   Duration: ${(result.durationMs / 1000).toFixed(1)}s`);
-    if (result.error) log(`   Error: ${result.error}`);
     log("");
   }
 

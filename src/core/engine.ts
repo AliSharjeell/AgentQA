@@ -17,6 +17,7 @@ export interface TaskResult {
   durationMs: number;
   url: string;
   error: string | null;
+  report?: import('./harness').CliReport;
 }
 
 export interface RunTaskOptions {
@@ -100,7 +101,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
           steps,
           durationMs: Date.now() - startTime,
           url: targetUrl,
-          error: null
+          error: null,
+          report: result.report
         };
       }
 

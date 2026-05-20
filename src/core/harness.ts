@@ -9,10 +9,24 @@ export interface HarnessStepEvent {
   error?: string;
 }
 
+export interface CliReport {
+  result: 'PASS' | 'FAIL' | 'INFRA_FAILED';
+  scenario: string;
+  confirmedBugs: string[];
+  warnings: string[];
+  stepsExecuted: string[];
+  evidence: string[];
+  finalUrl: string;
+  screenshots: string[];
+  consoleErrors: string[];
+  fixRecommendations: string[];
+}
+
 export interface HarnessResult {
   ok: boolean;
   summary: string;
   error?: string;
+  report?: CliReport;
 }
 
 interface ResolvedCommand {
@@ -106,7 +120,7 @@ export function runHarnessScript(
       try {
         const event = JSON.parse(line.slice('BH_EVENT '.length)) as Partial<HarnessStepEvent> & Partial<HarnessResult> & { final?: boolean };
         if (event.final) {
-          finalResult = { ok: Boolean(event.ok), summary: event.summary ?? '', error: event.error };
+          finalResult = { ok: Boolean(event.ok), summary: event.summary ?? '', error: event.error, report: event.report };
           return;
         }
         if (event.instruction) {

@@ -27,6 +27,8 @@
  */
 import path from "node:path";
 import fs from "node:fs";
+import { runQaTask as runEngineQaTask } from "../core/engine";
+import { HarnessStepEvent } from "../core/harness";
 import { spawn } from "node:child_process";
 import {
   app,
@@ -88,47 +90,53 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
   try {
     emitProgress({ type: "task_progress", taskId: task.id, message: "Running browser-harness in preview..." });
     const settings = loadSettings();
-    const harnessResult = await runBrowserHarnessAgent(task, settings, (event) => {
-      if (event.status === "running") {
-        // Auto-complete any previous running step
-        const lastStep = steps[steps.length - 1];
-        if (lastStep && lastStep.status === "running" && lastStep.instruction !== event.instruction) {
-          lastStep.status = "done";
-          lastStep.timestamp = new Date().toISOString();
+    
+    // Ensure the browser view is initialized
+    if (browserView && !browserView.webContents.getURL().includes(task.targetUrl)) {
+      browserView.webContents.loadURL(task.targetUrl).catch(() => {});
+    }
+
+    const engineResult = await runEngineQaTask({
+      targetUrl: task.targetUrl,
+      prompt: task.name,
+      settings,
+      cdpUrl: `http://127.0.0.1:${PREVIEW_DEBUG_PORT}`,
+      onStep: (event: HarnessStepEvent) => {
+        if (event.status === "running") {
+          const lastStep = steps[steps.length - 1];
+          if (lastStep && lastStep.status === "running" && lastStep.instruction !== event.instruction) {
+            lastStep.status = "done";
+            lastStep.timestamp = new Date().toISOString();
+          }
+          const existing = steps.find(s => s.instruction === event.instruction && s.status === "running");
+          if (!existing) {
+            addStep(event.instruction, "running");
+          }
+          return;
         }
 
-        // Check if a step with this instruction already exists in running state
-        const existing = steps.find(s => s.instruction === event.instruction && s.status === "running");
-        if (!existing) {
-          addStep(event.instruction, "running");
-        }
-        return;
-      }
-
-      // Find the step with the matching instruction (search backwards)
-      const matchingStep = [...steps].reverse().find(s => s.instruction === event.instruction);
-      if (matchingStep) {
-        matchingStep.status = event.status;
-        matchingStep.result = event.result;
-        matchingStep.error = event.error;
-        matchingStep.timestamp = new Date().toISOString();
-        setTaskSteps(task.id, [...steps]);
-      } else {
-        // Fallback: update the last step if it is running
-        const lastStep = steps[steps.length - 1];
-        if (lastStep && lastStep.status === "running") {
-          lastStep.status = event.status;
-          lastStep.result = event.result;
-          lastStep.error = event.error;
-          lastStep.timestamp = new Date().toISOString();
+        const matchingStep = [...steps].reverse().find(s => s.instruction === event.instruction);
+        if (matchingStep) {
+          matchingStep.status = event.status as TaskStepStatus;
+          matchingStep.result = event.result;
+          matchingStep.error = event.error;
+          matchingStep.timestamp = new Date().toISOString();
           setTaskSteps(task.id, [...steps]);
         } else {
-          addStep(event.instruction, event.status, event.result, event.error);
+          const lastStep = steps[steps.length - 1];
+          if (lastStep && lastStep.status === "running") {
+            lastStep.status = event.status as TaskStepStatus;
+            lastStep.result = event.result;
+            lastStep.error = event.error;
+            lastStep.timestamp = new Date().toISOString();
+            setTaskSteps(task.id, [...steps]);
+          } else {
+            addStep(event.instruction, event.status as TaskStepStatus, event.result, event.error);
+          }
         }
       }
     });
 
-    // Clean up any remaining running steps to done
     for (const step of steps) {
       if (step.status === "running") {
         step.status = "done";
@@ -137,19 +145,24 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
     }
     setTaskSteps(task.id, [...steps]);
 
-    if (!harnessResult.ok) {
-      throw new Error(harnessResult.error);
+    if (!engineResult.ok) {
+      throw new Error(engineResult.error || engineResult.summary);
     }
 
     const endTime = new Date().toISOString();
     const passedSteps = steps.filter((step) => step.status === "done").length;
     const failedSteps = steps.filter((step) => step.status === "failed").length;
+    
+    // Merge engine's LLM-generated report if available
+    const r = engineResult.report;
+    const overallStatus = r ? (r.result === "PASS" ? "pass" : "fail") : "pass";
+    
     const report: QaReport = {
       taskId: task.id,
       taskName: task.name,
       targetUrl: task.targetUrl,
-      overallStatus: "pass",
-      summary: harnessResult.summary,
+      overallStatus,
+      summary: engineResult.summary,
       totalSteps: steps.length,
       passedSteps,
       failedSteps,
@@ -164,8 +177,10 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
         duration: 0,
         error: step.error
       })),
-      screenshots: [],
-      aiReasoning: "Executed by browser-harness against the embedded preview browser via CDP."
+      screenshots: r?.screenshots ?? [],
+      aiReasoning: r 
+        ? `Scenario: ${r.scenario}\n\nConfirmed Bugs: ${r.confirmedBugs.join(', ') || 'None'}\n\nFix Recommendations: ${r.fixRecommendations.join(', ') || 'None'}`
+        : "Executed by browser-harness against the embedded preview browser via CDP."
     };
 
     attachReport(task.id, report);
@@ -183,7 +198,6 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
       addStep("Run browser check", "failed", undefined, message);
     }
 
-    // Clean up all other running steps to done
     for (const step of steps) {
       if (step.status === "running") {
         step.status = "done";
@@ -195,642 +209,6 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
     emitProgress({ type: "task_failed", taskId: task.id, message });
     updateTask(task.id, { status: "failed" });
     return true;
-  }
-}
-
-type HarnessStepEvent = {
-  instruction: string;
-  status: TaskStepStatus;
-  result?: string;
-  error?: string;
-};
-
-type HarnessCheckResult = {
-  ok: boolean;
-  summary: string;
-  error?: string;
-};
-
-async function runBrowserHarnessAgent(
-  task: QaTask,
-  settings: AppSettings,
-  onStep: (event: HarnessStepEvent) => void
-): Promise<HarnessCheckResult> {
-  // Native Electron implementation of the observation step for speed and efficiency
-  let observation: { ok: boolean; summary: string; error?: string } = {
-    ok: false,
-    summary: "DOM inspection failed."
-  };
-
-  try {
-    if (!browserView) {
-      throw new Error("Preview browser is not initialized.");
-    }
-    const view = browserView;
-
-    onStep({ instruction: `Open ${task.targetUrl}`, status: "running" });
-
-    // Skip reload if the preview is already on the target URL
-    const currentUrl = view.webContents.getURL();
-    const alreadyThere = currentUrl && new URL(currentUrl).origin === new URL(task.targetUrl).origin
-      && new URL(currentUrl).pathname === new URL(task.targetUrl).pathname;
-
-    if (!alreadyThere) {
-      await view.webContents.loadURL(task.targetUrl).catch(() => {});
-
-      if (view.webContents.isLoading()) {
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            view.webContents.once('did-stop-loading', () => resolve());
-          }),
-          new Promise<void>((resolve) => setTimeout(resolve, 4000))
-        ]);
-      }
-
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    const url = view.webContents.getURL();
-    const title = view.webContents.getTitle();
-    
-    onStep({ instruction: `Open ${task.targetUrl}`, status: "done", result: `Loaded ${url}` });
-    onStep({ instruction: "Inspect DOM with browser-harness", status: "running" });
-
-    // Evaluate JavaScript in the browser view to scrape visible elements
-    const elements = await view.webContents.executeJavaScript(`(() => {
-      const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[role="button"],[role="link"],[tabindex]'));
-      const visibleNodes = nodes.filter(el => {
-        const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-      });
-      return visibleNodes.slice(0, 500).map((el, index) => {
-        const rect = el.getBoundingClientRect();
-        const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || '').trim();
-        return {
-          index,
-          tag: el.tagName.toLowerCase(),
-          role: el.getAttribute('role') || '',
-          text: text.slice(0, 140),
-          href: el.href || '',
-          name: el.getAttribute('name') || '',
-          id: el.id || '',
-          classes: String(el.className || '').slice(0, 120),
-          visible: true,
-          x: Math.round(rect.left + rect.width / 2),
-          y: Math.round(rect.top + rect.height / 2)
-        };
-      });
-    })()`).catch(() => []);
-
-    const observationData = {
-      taskUrl: task.targetUrl,
-      page: { url, title },
-      interactiveElements: elements
-    };
-
-    const observationSummary = JSON.stringify(observationData);
-    observation = {
-      ok: true,
-      summary: observationSummary
-    };
-    onStep({ instruction: "Inspect DOM with browser-harness", status: "done", result: observationSummary.slice(0, 3500) });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    observation = {
-      ok: false,
-      summary: "DOM inspection failed.",
-      error: msg
-    };
-    onStep({ instruction: "Inspect DOM with browser-harness", status: "failed", error: msg });
-  }
-
-  if (!settings.apiKey) {
-    return {
-      ok: false,
-      summary: "Browser-harness inspected the page, but no model is configured to decide actions.",
-      error: "Save an API key in Settings so the QA agent can reason over the DOM snapshot and generate actions."
-    };
-  }
-
-  let previousFailure = observation.ok ? "" : observation.error ?? observation.summary;
-
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    onStep({ instruction: `Plan browser actions with model (attempt ${attempt})`, status: "running" });
-    const harnessScript = await generateBrowserHarnessScript(task, settings, observation.summary, previousFailure, attempt);
-    onStep({ instruction: `Plan browser actions with model (attempt ${attempt})`, status: "done", result: "Generated browser-harness action script." });
-    const result = await runBrowserHarnessScript(harnessScript, onStep);
-
-    if (result.ok) {
-      return result;
-    }
-
-    previousFailure = [
-      previousFailure,
-      `Attempt ${attempt} failed: ${result.error ?? result.summary}`
-    ].filter(Boolean).join("\n");
-  }
-
-  return {
-    ok: false,
-    summary: "Browser-harness could not complete the task after inspecting and retrying.",
-    error: previousFailure || "No successful action sequence was produced."
-  };
-}
-
-async function generateBrowserHarnessScript(
-  task: QaTask,
-  settings: AppSettings,
-  observation: string,
-  previousFailure: string,
-  attempt: number
-): Promise<string> {
-  const prompt = `You are generating Python code for browser-harness, a CDP browser automation harness.
-The code will be piped directly to the browser-harness CLI via stdin and will control the already-visible live preview browser.
-IMPORTANT: A helper function set_value(selector, text) is already defined for you in the preamble. Use it for ALL form inputs.
-
-Task: ${task.name}
-Target URL: ${task.targetUrl}
-Attempt: ${attempt} of 3
-
-Current browser/DOM observation:
-${observation}
-
-Previous failure or retry context:
-${previousFailure || "None"}
-
-Available helper functions (all synchronous, already in global scope):
-
-Navigation & Page:
-- goto_url(url)                    # Navigate to URL
-- wait_for_load()                  # Wait for page load event
-- page_info() -> dict              # Returns {"url", "title", "w", "h"}
-- js(expression) -> any            # Evaluate JavaScript, returns result
-
-Form Input (USE set_value for ALL text/password/email/search fields):
-- set_value(selector, text)        # Sets input value via JavaScript. Works with React, Vue, vanilla HTML.
-                                   # Example: set_value('#user-name', 'standard_user')
-                                   # Example: set_value('input[name="password"]', 'secret_sauce')
-- press_key(key)                   # Press a key: "Enter", "Tab", "Escape", "Backspace", "ArrowDown"
-
-Clicking:
-- click_at_xy(x, y)               # Click at viewport coordinates. x, y MUST be int.
-
-Scrolling:
-- scroll(x, y, dy=-300)           # Scroll at (x,y) by dy pixels
-
-Waiting:
-- wait_for_element(selector, timeout=5.0) -> bool
-
-Screenshots:
-- capture_screenshot(path=None, full=False) -> str
-
-CRITICAL RULES:
-1. For ALL form fields (text, password, email, search, textarea), use set_value(selector, text).
-   Do NOT use fill_input, type_text, or click_at_xy + type_text for form fields.
-   set_value uses JavaScript to set values and fire React/Vue-compatible events.
-
-2. js() returns a dict/list/string/int/bool/None. NEVER pass js() directly to click_at_xy().
-   CORRECT pattern for clicking elements:
-     pos = js("(() => { const e = document.querySelector('#btn'); if(!e) return null; const r = e.getBoundingClientRect(); return {x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2)}; })()")
-     if pos: click_at_xy(int(pos['x']), int(pos['y']))
-
-3. For select/dropdown elements, use js() to set the value:
-     js("document.querySelector('select#country').value = 'US'; document.querySelector('select#country').dispatchEvent(new Event('change', {bubbles:true}))")
-
-4. Always import json and time at the top. Use time.sleep(0.5) between actions.
-
-5. Use triple-quoted strings for multi-line JS in js(). Never leave strings unterminated.
-
-6. Wrap everything in try/except that emits a final error event.
-
-Required output format:
-- Return ONLY valid Python code. No markdown fences, no comments before imports.
-- Start with imports and emit helper, then try/except block.
-- Emit progress: emit({"instruction": "...", "status": "running"|"done"|"failed", "result": "...", "error": "..."})
-- Emit exactly one final: emit({"final": True, "ok": bool, "summary": "...", "error": "..."})
-
-Agent Instructions:
-- Open the target URL with goto_url(), wait_for_load(), time.sleep(1).
-- Use set_value() for ALL form fields.
-- Use click_at_xy() only for buttons/links. Always extract int x,y from js() result dict.
-- After submitting forms, wait_for_load() + time.sleep(1) + verify with page_info().
-- Never report a bug unless verified twice after waiting and scrolling.
-- If no bugs are found after thorough testing, say "No confirmed bugs found" in the summary. Do NOT invent or speculate about issues that were not actually observed.
-- If URL becomes chrome-error://chromewebdata, report as infrastructure failure, not website bug.
-- Wrap everything in try/except.
-
-Complete example — login flow:
-import json
-import time
-
-def emit(payload):
-    print('BH_EVENT ' + json.dumps(payload), flush=True)
-
-try:
-    emit({'instruction': 'Open login page', 'status': 'running'})
-    goto_url('https://example.com/login')
-    wait_for_load()
-    time.sleep(1)
-    emit({'instruction': 'Open login page', 'status': 'done', 'result': 'Loaded'})
-
-    emit({'instruction': 'Enter credentials', 'status': 'running'})
-    set_value('#username', 'myuser')
-    time.sleep(0.3)
-    set_value('#password', 'mypass')
-    time.sleep(0.3)
-    emit({'instruction': 'Enter credentials', 'status': 'done', 'result': 'Filled username and password'})
-
-    emit({'instruction': 'Click login button', 'status': 'running'})
-    pos = js("(() => { const e = document.querySelector('button[type=submit]'); if(!e) return null; const r = e.getBoundingClientRect(); return {x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2)}; })()")
-    if pos:
-        click_at_xy(int(pos['x']), int(pos['y']))
-    else:
-        press_key('Enter')
-    wait_for_load()
-    time.sleep(1)
-    info = page_info()
-    emit({'instruction': 'Click login button', 'status': 'done', 'result': 'Now at ' + info.get('url', '')})
-
-    emit({'final': True, 'ok': True, 'summary': 'Successfully logged in.'})
-except Exception as exc:
-    emit({'final': True, 'ok': False, 'summary': 'Script failed.', 'error': str(exc)})
-`;
-
-  try {
-    const response = settings.apiProvider === "openai"
-      ? await callOpenAiForHarnessScript(settings, prompt)
-      : await callAnthropicForHarnessScript(settings, prompt);
-    return normalizeHarnessScript(response);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return buildGenericBrowserHarnessScript(task, `Could not generate a task-specific harness script: ${message}`);
-  }
-}
-
-async function callAnthropicForHarnessScript(settings: AppSettings, prompt: string): Promise<string> {
-  const res = await fetch(`${settings.apiBaseUrl || "https://api.anthropic.com"}/v1/messages`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": settings.apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: settings.model || "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }]
-    })
-  });
-
-  if (!res.ok) {
-    throw new Error(`Anthropic-compatible API returned ${res.status}: ${await res.text()}`);
-  }
-
-  const data = await res.json() as { content?: Array<{ type?: string; text?: string }> };
-  return data.content?.find((part) => part.type === "text")?.text ?? "";
-}
-
-async function callOpenAiForHarnessScript(settings: AppSettings, prompt: string): Promise<string> {
-  const res = await fetch(`${settings.apiBaseUrl || "https://api.openai.com/v1"}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${settings.apiKey}`
-    },
-    body: JSON.stringify({
-      model: settings.model || "gpt-4.1-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0
-    })
-  });
-
-  if (!res.ok) {
-    throw new Error(`OpenAI-compatible API returned ${res.status}: ${await res.text()}`);
-  }
-
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
-}
-
-function normalizeHarnessScript(script: string): string {
-  const trimmed = script.trim();
-  const fenceMatch = trimmed.match(/```(?:python)?\s*([\s\S]*?)```/i);
-  return fenceMatch ? fenceMatch[1].trim() : trimmed;
-}
-
-function buildObservationBrowserHarnessScript(task: QaTask): string {
-  return `
-import json
-
-target_url = ${JSON.stringify(task.targetUrl)}
-
-def emit(payload):
-    print("BH_EVENT " + json.dumps(payload), flush=True)
-
-try:
-    emit({"instruction": "Open " + target_url, "status": "running"})
-    goto_url(target_url)
-    wait_for_load()
-    info = page_info()
-    emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
-
-    emit({"instruction": "Inspect DOM with browser-harness", "status": "running"})
-    elements = js("""(() => {
-      const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[role="button"],[role="link"],[tabindex]'));
-      return nodes.slice(0, 120).map((el, index) => {
-        const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || '').trim();
-        return {
-          index,
-          tag: el.tagName.toLowerCase(),
-          role: el.getAttribute('role') || '',
-          text: text.slice(0, 140),
-          href: el.href || '',
-          name: el.getAttribute('name') || '',
-          id: el.id || '',
-          classes: String(el.className || '').slice(0, 120),
-          visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
-          x: Math.round(rect.left + rect.width / 2),
-          y: Math.round(rect.top + rect.height / 2)
-        };
-      });
-    })()""")
-    observation = {
-        "taskUrl": target_url,
-        "page": info,
-        "interactiveElements": elements
-    }
-    emit({"instruction": "Inspect DOM with browser-harness", "status": "done", "result": json.dumps(observation)[:3500]})
-    emit({"final": True, "ok": True, "summary": json.dumps(observation)})
-except Exception as exc:
-    emit({"instruction": "Inspect DOM with browser-harness", "status": "failed", "error": str(exc)})
-    emit({"final": True, "ok": False, "summary": "DOM inspection failed.", "error": str(exc)})
-`;
-}
-
-function buildGenericBrowserHarnessScript(task: QaTask, note?: string): string {
-  return `
-import json
-import time
-
-target_url = ${JSON.stringify(task.targetUrl)}
-task_name = ${JSON.stringify(task.name)}
-note = ${JSON.stringify(note ?? "")}
-
-def emit(payload):
-    print("BH_EVENT " + json.dumps(payload), flush=True)
-
-try:
-    emit({"instruction": "Open " + target_url, "status": "running"})
-    goto_url(target_url)
-    wait_for_load()
-    info = page_info()
-    emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
-
-    emit({
-        "instruction": "Inspect page state with browser-harness",
-        "status": "done",
-        "result": "Active page: " + info.get("title", "") + " (" + info.get("url", target_url) + ")"
-    })
-    emit({
-        "final": True,
-        "ok": False,
-        "summary": "Browser-harness opened the page, but no task-specific script was generated.",
-        "error": note or "No LLM-generated harness script was available for: " + task_name
-    })
-except Exception as exc:
-    emit({
-        "instruction": "Run browser-harness repository check",
-        "status": "failed",
-        "error": str(exc)
-    })
-    emit({
-        "final": True,
-        "ok": False,
-        "summary": "Browser-harness repository check failed.",
-        "error": str(exc)
-    })
-`;
-}
-
-function runBrowserHarnessScript(
-  script: string,
-  onStep: (event: HarnessStepEvent) => void
-): Promise<HarnessCheckResult> {
-  return new Promise((resolve) => {
-    const { executable, args } = resolveBrowserHarnessCommand();
-    const child = spawn(executable, args, {
-      shell: false,
-      env: {
-        ...process.env,
-        BU_CDP_URL: `http://127.0.0.1:${PREVIEW_DEBUG_PORT}`
-      },
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-
-    let finalResult: HarnessCheckResult | null = null;
-    let stderr = "";
-    let stdout = "";
-    let stdoutBuffer = "";
-    let settled = false;
-
-    const timeout = setTimeout(() => {
-      child.kill();
-      finish({
-        ok: false,
-        summary: "Browser-harness timed out.",
-        error: "The harness process did not return a final result within 120 seconds."
-      });
-    }, 120000);
-
-    const finish = (result: HarnessCheckResult): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve(result);
-    };
-
-    const handleLine = (line: string): void => {
-      if (!line.startsWith("BH_EVENT ")) return;
-      try {
-        const event = JSON.parse(line.slice("BH_EVENT ".length)) as Partial<HarnessStepEvent> & Partial<HarnessCheckResult> & { final?: boolean };
-        if (event.final) {
-          finalResult = {
-            ok: Boolean(event.ok),
-            summary: event.summary ?? "",
-            error: event.error
-          };
-          return;
-        }
-
-        if (event.instruction) {
-          onStep({
-            instruction: event.instruction,
-            status: event.status ?? "running",
-            result: event.result,
-            error: event.error
-          });
-        }
-      } catch (err) {
-        // ignore malformed lines
-      }
-    };
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-      stdoutBuffer += chunk.toString();
-      let idx;
-      while ((idx = stdoutBuffer.indexOf("\n")) !== -1) {
-        const line = stdoutBuffer.slice(0, idx).trim();
-        stdoutBuffer = stdoutBuffer.slice(idx + 1);
-        handleLine(line);
-      }
-    });
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      finish({
-        ok: false,
-        summary: "Browser-harness could not be started.",
-        error: `${error.message}. Install it with: uv tool install git+https://github.com/browser-use/browser-harness`
-      });
-    });
-
-    child.on("close", (code) => {
-      if (stdoutBuffer.trim()) {
-        handleLine(stdoutBuffer.trim());
-      }
-      if (finalResult) {
-        finish(finalResult);
-      } else {
-        finish({
-          ok: false,
-          summary: "Browser-harness exited prematurely.",
-          error: `Process exited with code ${code}.\nStderr: ${stderr}\nStdout: ${stdout}`
-        });
-      }
-    });
-
-    // Prepend set_value helper that uses JavaScript to set input values.
-    // This bypasses Electron's CDP keyDown double-dispatch bug that causes
-    // fill_input/press_key to type every character twice.
-    const preamble = `
-import json as _json
-
-def set_value(selector, text):
-    """Set an input's value via JavaScript — works in React, Vue, and vanilla HTML."""
-    _sel = _json.dumps(selector)
-    _val = _json.dumps(text)
-    js(f"""(() => {{
-        const el = document.querySelector({_sel});
-        if (!el) throw new Error('set_value: element not found: ' + {_sel});
-        const proto = Object.getPrototypeOf(el);
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
-            || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-            || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-        if (descriptor && descriptor.set) {{
-            descriptor.set.call(el, {_val});
-        }} else {{
-            el.value = {_val};
-        }}
-        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-    }})()""");
-
-`;
-    child.stdin.write(preamble + script);
-    child.stdin.end();
-  });
-}
-
-interface ResolvedCommand {
-  executable: string;
-  args: string[];
-}
-
-function resolveBrowserHarnessCommand(): ResolvedCommand {
-  if (process.env.BROWSER_HARNESS_PATH && fs.existsSync(process.env.BROWSER_HARNESS_PATH)) {
-    return { executable: process.env.BROWSER_HARNESS_PATH, args: [] };
-  }
-
-  const userProfile = process.env.USERPROFILE;
-  if (userProfile) {
-    // 1. Try AppData Roaming uv tools python.exe for instant execution bypass (saves wrapper startup lag)
-    const pythonExePath = path.join(userProfile, "AppData", "Roaming", "uv", "tools", "browser-harness", "Scripts", "python.exe");
-    if (fs.existsSync(pythonExePath)) {
-      return { executable: pythonExePath, args: ["-m", "browser_harness.run"] };
-    }
-
-    // 2. Try standard local bin path
-    const uvToolPath = path.join(userProfile, ".local", "bin", "browser-harness.exe");
-    if (fs.existsSync(uvToolPath)) {
-      return { executable: uvToolPath, args: [] };
-    }
-  }
-
-  return { executable: "browser-harness", args: [] };
-}
-
-async function getPreviewAutomationTarget(
-  playwright: typeof import("playwright"),
-  targetUrl: string
-): Promise<{
-  page: import("playwright").Page;
-  context: import("playwright").BrowserContext;
-  disconnect: () => void;
-}> {
-  if (!browserView) {
-    throw new Error("Preview browser is not ready yet.");
-  }
-
-  await browserView.webContents.loadURL(targetUrl).catch(() => {});
-
-  const browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${PREVIEW_DEBUG_PORT}`);
-  const deadline = Date.now() + 5000;
-  const normalize = (url: string): string => url.replace(/\/$/, "");
-
-  while (Date.now() < deadline) {
-    const previewUrl = browserView.webContents.getURL();
-
-    for (const context of browser.contexts()) {
-      const previewPage = context
-        .pages()
-        .find((page) => normalize(page.url()) === normalize(targetUrl) || normalize(page.url()) === normalize(previewUrl));
-
-      if (previewPage) {
-        return {
-          page: previewPage,
-          context,
-          disconnect: () => {
-            const disconnect = (browser as unknown as { disconnect?: () => void }).disconnect;
-            if (disconnect) disconnect.call(browser);
-          }
-        };
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-
-  throw new Error("Could not attach automation to the preview browser. Restart the app and try again.");
-}
-
-async function capturePageScreenshot(
-  page: import("playwright").Page,
-  screenshotDir: string
-): Promise<string | undefined> {
-  try {
-    const filename = `screenshot-${Date.now()}.png`;
-    const filePath = path.join(screenshotDir, filename);
-    await page.screenshot({ path: filePath, fullPage: false });
-    return filePath;
-  } catch {
-    return undefined;
   }
 }
 
@@ -1050,18 +428,6 @@ function runNextQueuedTask(): void {
     startQueuedTask(nextTaskId);
     return;
   }
-}
-
-function isBrowserHarnessRepositoryTask(task: QaTask): boolean {
-  return /repositor(?:y|ies)|repo\s+tab|tab\s+works/i.test(task.name);
-}
-
-function isBrowserHarnessRepoOwnerProfileTask(task: QaTask): boolean {
-  return /within a repo|inside a repo|repo.+profile|profile.+repo|owner.+profile|main profile/i.test(task.name);
-}
-
-function isToolUseResponseError(message: string): boolean {
-  return /expected tool use in response|model returned empty action|no next action returned|success=false/i.test(message);
 }
 
 // ─── Progress Emitter ─────────────────────────────────────────────────────
