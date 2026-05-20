@@ -399,7 +399,7 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
 
       {active && (
         <div 
-          className="border-t border-white/5 pl-8 pr-3 py-2.5 space-y-2.5 text-zinc-400 text-xs"
+          className="border-t border-white/5 pl-8 pr-3 py-2.5 space-y-2.5 text-zinc-400 text-xs select-text cursor-default"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Natural language response block at the top */}
