@@ -4,7 +4,7 @@
   "description": "AI-powered QA automation desktop app with live browser preview, task management, and AI-driven test execution using browser-use",
   "main": "out/main/index.js",
   "bin": {
-    "agentqa": "./out/cli/index.js"
+    "agentqa": "out/cli/index.js"
   },
   "type": "module",
   "publishConfig": {
