@@ -59,6 +59,10 @@
     "directories": {
       "output": "dist_electron"
     },
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    },
     "files": [
       "out/**/*",
       "package.json"
