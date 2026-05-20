@@ -258,6 +258,12 @@ Because the skill is located in the `skills/agentqa-cli/` directory of the repos
 
 *(This teaches the agent how to run `agentqa` and how to interpret the JSON output).*
 
+### Fetching the Skill in Other Repositories
+If you want to use the AgentQA skill in a different repository, you can copy-paste this prompt to your AI agent (e.g. Claude Code, Cline, Antigravity) to fetch and install it:
+
+> "Please download the AgentQA CLI skill configuration from \`https://raw.githubusercontent.com/AliSharjeell/AgentQA/master/skills/agentqa-cli/SKILL.md\` and save it locally in my project at \`skills/agentqa-cli/SKILL.md\`. After downloading, read the skill guidelines to understand how to verify my code changes using the global \`agentqa\` command."
+
+
 ---
 
 ## Troubleshooting
