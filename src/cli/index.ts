@@ -114,7 +114,7 @@ async function askQuestion(query: string): Promise<string> {
 
 async function runConfigWizard(): Promise<void> {
   const current = loadSettings();
-  log("=== AgentQA Configuration Wizard ===");
+  log("=== AgentQA by Ali Sharjeel - Configuration Wizard ===");
   log("Press Enter to keep the current value.\n");
 
   const providerInput = await askQuestion(`API Provider (${current.apiProvider || "anthropic"}): `);
@@ -213,7 +213,7 @@ async function main(): Promise<void> {
   // Show help if no arguments or help requested
   if (!command && Object.keys(options).length === 0 || command === "help" || command === "--help" || options.help) {
     log(`
-agentqa — Headless QA automation for coding agents & CI/CD
+agentqa by Ali Sharjeel — Headless QA automation for coding agents & CI/CD
 
 USAGE:
   agentqa run --url <URL> --prompt <PROMPT> [options]
@@ -361,6 +361,9 @@ EXAMPLES:
   const timeoutMs = options.timeout ? parseInt(options.timeout as string, 10) * 1000 : 120000;
 
   if (verbose) {
+    log(`\n=========================================`);
+    log(`   agentqa by Ali Sharjeel`);
+    log(`=========================================`);
     log(`\n🔍 QA Agent — ${url}`);
     log(`   Prompt: ${prompt}`);
     log(`   Provider: ${settings.apiProvider} / ${settings.model || "(default)"}`);
@@ -411,7 +414,8 @@ EXAMPLES:
     log("");
   }
 
-  process.exit(result.ok ? 0 : 1);
+  const isPassed = result.ok && (!result.report || result.report.result === "PASS");
+  process.exit(isPassed ? 0 : 1);
 }
 
 main().catch((err) => {

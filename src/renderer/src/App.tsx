@@ -410,22 +410,22 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
             </div>
           )}
           {task.status === "failed" && !task.report && (
-            <div className="space-y-1">
+            <div className="space-y-1 select-text">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Error</p>
-              <p className="text-[11px] text-red-400 leading-relaxed pl-1">
+              <p className="text-[11px] text-red-400 leading-relaxed pl-1 select-text cursor-text">
                 {task.steps.find((s) => s.status === "failed")?.error || "Task stopped due to an error."}
               </p>
             </div>
           )}
           {task.report?.summary && (
-            <div className="space-y-1">
+            <div className="space-y-1 select-text">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Result</p>
-              <p className="text-[11px] text-zinc-300 leading-relaxed pl-1">{task.report.summary}</p>
+              <p className="text-[11px] text-zinc-300 leading-relaxed pl-1 select-text cursor-text">{task.report.summary}</p>
             </div>
           )}
 
           {task.steps.length > 0 && (
-            <div className="space-y-1">
+            <div className="space-y-1 select-text">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Steps</p>
               {task.steps.map((step) => (
                 <StepRow key={step.id} step={step} />
@@ -434,9 +434,9 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
           )}
 
           {task.aiPlan && (
-            <div>
+            <div className="select-text">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">AI Plan</p>
-              <p className="text-xs text-zinc-400 leading-relaxed">{task.aiPlan}</p>
+              <p className="text-xs text-zinc-400 leading-relaxed select-text cursor-text">{task.aiPlan}</p>
             </div>
           )}
         </div>
@@ -458,13 +458,13 @@ function StepRow({ step }: { step: QaTask["steps"][number] }): JSX.Element {
     <Circle size={11} />;
 
   return (
-    <div className="flex items-start gap-2 py-0.5">
-      <span className={`mt-0.5 shrink-0 ${statusColor}`}>{statusIcon}</span>
-      <div className="min-w-0 flex-1">
-        <p className={`text-[11px] ${step.status === "failed" ? "text-red-400" : "text-zinc-300"}`}>{step.instruction}</p>
-        {step.result && <p className="text-[10px] text-zinc-600 mt-0.5 truncate">{step.result}</p>}
-        {step.error && <p className="text-[10px] text-red-500 mt-0.5">{step.error}</p>}
-        {step.screenshotPath && <p className="text-[10px] text-indigo-400 mt-0.5">Screenshot saved</p>}
+    <div className="flex items-start gap-2 py-0.5 select-text">
+      <span className={`mt-0.5 shrink-0 select-none ${statusColor}`}>{statusIcon}</span>
+      <div className="min-w-0 flex-1 select-text">
+        <p className={`text-[11px] select-text cursor-text ${step.status === "failed" ? "text-red-400" : "text-zinc-300"}`}>{step.instruction}</p>
+        {step.result && <p className="text-[10px] text-zinc-600 mt-0.5 truncate select-text cursor-text">{step.result}</p>}
+        {step.error && <p className="text-[10px] text-red-500 mt-0.5 select-text cursor-text">{step.error}</p>}
+        {step.screenshotPath && <p className="text-[10px] text-indigo-400 mt-0.5 select-text">Screenshot saved</p>}
       </div>
     </div>
   );

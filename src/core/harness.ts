@@ -10,7 +10,7 @@ export interface HarnessStepEvent {
 }
 
 export interface CliReport {
-  result: 'PASS' | 'FAIL' | 'INFRA_FAILED';
+  result: 'PASS' | 'FAIL' | 'INFRA_FAILED' | 'AGENT_FAILED' | 'FAIL_AGENT_QA';
   scenario: string;
   confirmedBugs: string[];
   warnings: string[];

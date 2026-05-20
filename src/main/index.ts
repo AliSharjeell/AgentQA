@@ -84,7 +84,8 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
       error,
       timestamp: new Date().toISOString()
     });
-    setTaskSteps(task.id, [...steps]);
+    const updated = setTaskSteps(task.id, [...steps]);
+    emitTaskProgress(updated);
   };
 
   try {
@@ -122,7 +123,8 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
           matchingStep.result = event.result;
           matchingStep.error = event.error;
           matchingStep.timestamp = new Date().toISOString();
-          setTaskSteps(task.id, [...steps]);
+          const updated = setTaskSteps(task.id, [...steps]);
+          emitTaskProgress(updated);
         } else {
           const lastStep = steps[steps.length - 1];
           if (lastStep && lastStep.status === "running") {
@@ -130,7 +132,8 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
             lastStep.result = event.result;
             lastStep.error = event.error;
             lastStep.timestamp = new Date().toISOString();
-            setTaskSteps(task.id, [...steps]);
+            const updated = setTaskSteps(task.id, [...steps]);
+            emitTaskProgress(updated);
           } else {
             addStep(event.instruction, event.status as TaskStepStatus, event.result, event.error);
           }
@@ -144,7 +147,8 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
         step.timestamp = new Date().toISOString();
       }
     }
-    setTaskSteps(task.id, [...steps]);
+    const finalSteps = setTaskSteps(task.id, [...steps]);
+    emitTaskProgress(finalSteps);
 
     if (!engineResult.ok) {
       throw new Error(engineResult.error || engineResult.summary);
@@ -185,7 +189,8 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
     };
 
     attachReport(task.id, report);
-    updateTask(task.id, { status: "done" });
+    const completedTask = updateTask(task.id, { status: "done" });
+    emitTaskProgress(completedTask);
     emitProgress({ type: "task_complete", taskId: task.id, data: report });
     return true;
   } catch (err) {
@@ -206,9 +211,11 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
       }
     }
 
-    setTaskSteps(task.id, [...steps]);
+    const failedSteps = setTaskSteps(task.id, [...steps]);
+    emitTaskProgress(failedSteps);
     emitProgress({ type: "task_failed", taskId: task.id, message });
-    updateTask(task.id, { status: "failed" });
+    const failedTask = updateTask(task.id, { status: "failed" });
+    emitTaskProgress(failedTask);
     return true;
   }
 }
@@ -376,7 +383,8 @@ async function runQaTask(taskId: string): Promise<void> {
   stopTaskFlag = false;
 
   try {
-    updateTask(taskId, { status: "running" });
+    const runningTask = updateTask(taskId, { status: "running" });
+    emitTaskProgress(runningTask);
 
     if (await runBrowserHarnessTask(task)) {
       return;
@@ -384,7 +392,8 @@ async function runQaTask(taskId: string): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     emitProgress({ type: "task_failed", taskId, message });
-    updateTask(taskId, { status: "failed" });
+    const failedTask = updateTask(taskId, { status: "failed" });
+    emitTaskProgress(failedTask);
   } finally {
     if (runningTaskId === taskId) {
       runningTaskId = null;
@@ -538,13 +547,15 @@ function registerIpc(): void {
 
   ipcMain.handle("tasks:pause", (_, taskId: string) => {
     if (runningTaskId === taskId) {
-      updateTask(taskId, { status: "paused" });
+      const pausedTask = updateTask(taskId, { status: "paused" });
+      emitTaskProgress(pausedTask);
     }
   });
 
   ipcMain.handle("tasks:resume", (_, taskId: string) => {
     if (runningTaskId === taskId) {
-      updateTask(taskId, { status: "running" });
+      const runningTask = updateTask(taskId, { status: "running" });
+      emitTaskProgress(runningTask);
     }
   });
 
