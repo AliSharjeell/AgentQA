@@ -1,6 +1,8 @@
-# AgentQA
+<p align="center">
+  <img src="public/demo.gif" alt="AgentQA Demo" width="800" />
+</p>
 
-![AgentQA Demo](public/demo.gif)
+<h1 align="center">AgentQA</h1>
 
 AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a **desktop app** with live browser preview and as a **headless CLI** for coding agents.
 
