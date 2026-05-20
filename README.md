@@ -307,6 +307,10 @@ The AI agent follows these rules when testing:
 
 ## AI Agent Skill (for Antigravity, Claude Code, Codex, Cline, etc.)
 
+<p align="center">
+  <img src="public/cc.png" alt="AgentQA in Claude Code" width="800" />
+</p>
+
 We provide a built-in skill so that AI coding assistants can learn how to use the `agentqa` CLI directly within your codebase. This allows agents to autonomously verify their own code changes!
 
 ### How Agents Use It
