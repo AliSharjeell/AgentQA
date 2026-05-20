@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a desktop app with live browser preview and as a headless CLI for coding agents.
+  AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a headless CLI for coding agents.
 </p>
 
 <p align="center">
@@ -12,21 +12,13 @@
 
 ---
 
-## Two Interfaces, One Engine
-
-| | Desktop App | CLI (`agentqa`) |
-|---|---|---|
-| **For** | Manual QA, demos, debugging | Coding agents, CI/CD pipelines |
-| **Browser** | Embedded BrowserView (visible) | Headless Chrome (via browser-harness) |
-| **Output** | Interactive UI with step progress | Structured JSON to stdout |
-| **AI** | OpenAI / Anthropic (configurable) | Same — uses shared settings |
 
 ## Compatibility & Requirements
 
 ### Supported Operating Systems
-- **Windows (10/11)**: Full desktop support (packaged installer) and CLI compatibility.
-- **macOS (Apple Silicon & Intel)**: Full desktop support (packaged installer) and CLI compatibility.
-- **Linux (Ubuntu, Debian, etc.)**: CLI compatibility and AppImage packaging (optimized for headless CI/CD).
+- **Windows (10/11)**: CLI compatibility.
+- **macOS (Apple Silicon & Intel)**: CLI compatibility.
+- **Linux (Ubuntu, Debian, etc.)**: CLI compatibility (optimized for headless CI/CD).
 
 ### Supported Web Applications
 AgentQA operates directly on the DOM, making it compatible with any website or single-page application (SPA), including:
@@ -45,7 +37,9 @@ AgentQA operates directly on the DOM, making it compatible with any website or s
 
 ---
 
-### Option A: Headless CLI (NPM Global)
+### Installation & Setup
+
+#### Option A: NPM Global Installation (Recommended)
 
 If you are using AgentQA for coding agents (e.g., Claude Code, Cline), CI/CD pipelines, or command-line testing:
 
@@ -62,27 +56,7 @@ agentqa https://saucedemo.com "Login with standard_user/secret_sauce, add 2 item
 
 ---
 
-### Option B: Desktop GUI App (Clone & Dev)
-
-If you want the full React/Electron graphical interface with live interactive browser preview:
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/AliSharjeell/AgentQA.git
-cd AgentQA
-
-# 2. Install dependencies (installs Electron)
-npm install
-
-# 3. Launch the desktop app
-npm run dev
-```
-
-*Alternatively, you can build and package a standalone executable for your OS by running `npm run dist`.*
-
----
-
-### Option C: Local CLI Installation (For Development/Testing)
+#### Option B: Local CLI Installation (From Source)
 
 If you have cloned the repository and want to run your local code changes globally as the `agentqa` command:
 
@@ -113,14 +87,12 @@ agentqa https://saucedemo.com "Verify homepage elements"
 agentqa <URL> <PROMPT> [options]
 agentqa run <URL> <PROMPT> [options]
 agentqa config [options]
-agentqa app
 ```
 
 ### Subcommands
 
 * **`run` (Default)**: Run QA tests. Can be omitted if positional URL and prompt are provided.
 * **`config`**: Setup credentials interactively or via CLI flags (e.g. `agentqa config --api-key sk-xx --provider anthropic --vision off`).
-* **`app`**: Spawns the Electron Desktop App GUI window.
 
 ### Options:
 * `--url`: Target URL to test (can be a positional argument)
@@ -273,9 +245,9 @@ To make browser actions clear and observable in the live preview window:
 
 ### Key Design Decisions
 
-- **`set_value()` over `fill_input()`** — Uses JavaScript to set input values progressively (via prototype descriptor + event dispatch) instead of CDP key events, which avoids double-typing in Electron's BrowserView
-- **No browser bundled** — Uses `browser-harness` which manages its own Chrome daemon. No Playwright browser download required
-- **Shared engine** — `src/core/` has zero Electron imports, so it works in both the desktop app and headless CLI
+- **`set_value()` over `fill_input()`** — Uses JavaScript to set input values progressively (via prototype descriptor + event dispatch) instead of CDP key events, which avoids double-typing.
+- **No browser bundled** — Uses `browser-harness` which manages its own Chrome daemon. No Playwright browser download required.
+- **Shared engine** — `src/core/` has zero Electron imports.
 
 ---
 
@@ -297,19 +269,15 @@ To make browser actions clear and observable in the live preview window:
 ## Available Scripts
 
 ```bash
-npm run dev          # Desktop app with HMR
-npm run build        # Production build (desktop)
 npm run build:cli    # Bundle CLI to out/cli/index.js
-npm run typecheck    # TypeScript check (full project)
 npm run typecheck:cli  # TypeScript check (CLI only)
-npm run start        # Preview production build
 ```
 
 ---
 
 ## Configuration
 
-Settings are stored in `%APPDATA%/agentqa/settings.json` (shared between desktop and CLI):
+Settings are stored in `%APPDATA%/agentqa/settings.json`:
 
 ```json
 {
@@ -357,11 +325,7 @@ This was fixed by using `set_value()` (JavaScript-based) instead of `fill_input(
 
 ### CLI returns "No API key found"
 
-Pass `--api-key`, set `$QA_API_KEY`, or save your key in the desktop app's Settings page.
-
-### Desktop app shows loading bar when page is already loaded
-
-Fixed — the app now skips `loadURL()` if the preview is already on the target URL.
+Pass `--api-key` or set `$QA_API_KEY`.
 
 ---
 
