@@ -39,7 +39,18 @@ AgentQA operates directly on the DOM, making it compatible with any website or s
 
 ### Installation & Setup
 
-#### Option A: CLI Installation (NPM Global)
+#### Option A: Desktop GUI App (Pre-built Installers)
+
+If you prefer to run AgentQA using the React/Electron graphical desktop app with a live visual browser preview:
+
+* Download the installer for your operating system from the [GitHub Releases Page](https://github.com/AliSharjeell/AgentQA/releases).
+  * **Windows**: `AgentQA Setup 0.1.4.exe`
+  * **macOS**: `AgentQA-0.1.4.dmg` (Apple Silicon & Intel)
+  * **Linux**: `AgentQA-0.1.4.AppImage` (Ubuntu, Debian, etc.)
+
+---
+
+#### Option B: CLI Installation (NPM Global)
 
 If you are using AgentQA for coding agents (e.g., Claude Code, Cline), CI/CD pipelines, or command-line testing:
 
@@ -53,17 +64,6 @@ agentqa config
 # 3. Start testing immediately!
 agentqa https://saucedemo.com "Login with standard_user/secret_sauce, add 2 items, checkout" --verbose
 ```
-
----
-
-#### Option B: Desktop GUI App (Pre-built Installers)
-
-If you prefer to run AgentQA using the React/Electron graphical desktop app with a live visual browser preview:
-
-* Download the installer for your operating system from the [GitHub Releases Page](https://github.com/AliSharjeell/AgentQA/releases).
-  * **Windows**: `AgentQA Setup 0.1.4.exe`
-  * **macOS**: `AgentQA-0.1.4.dmg` (Apple Silicon & Intel)
-  * **Linux**: `AgentQA-0.1.4.AppImage` (Ubuntu, Debian, etc.)
 
 ---
 
