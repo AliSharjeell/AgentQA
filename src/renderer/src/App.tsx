@@ -362,51 +362,98 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
       }`}
       onClick={onClick}
     >
-      <div className="flex items-center gap-2.5 px-3 py-2">
-        <StatusIcon status={task.status} size={14} />
+      {active ? (
+        <div className="flex flex-col px-3 pt-3 pb-2 space-y-2.5">
+          {/* Top row with Status and Controls */}
+          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+            <div className="flex items-center gap-2">
+              <StatusIcon status={task.status} size={14} />
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                {task.status === "running" ? "Running" : task.status === "paused" ? "Paused" : task.status === "done" ? "Completed" : task.status === "failed" ? "Failed" : "To Do"}
+              </span>
+            </div>
 
-        <div
-          className="min-w-0 flex-1"
-          onClick={(e) => { if (active) e.stopPropagation(); }}
-        >
-          <p className={`${active ? "break-words whitespace-normal select-text cursor-text" : "truncate"} text-xs font-medium`}>
-            {task.name}
-          </p>
-          <p className={`${active ? "break-all whitespace-normal select-text cursor-text text-zinc-300" : "truncate text-zinc-500"} text-[10px]`}>
-            {task.targetUrl}
-          </p>
-        </div>
+            <div className="flex items-center gap-1 shrink-0">
+              {task.status === "todo" && (
+                <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStart(); }} title="Start">
+                  <Play size={11} />
+                </button>
+              )}
+              {isRunning && (
+                <>
+                  <button className="grid h-6 w-6 place-items-center rounded text-yellow-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onPause(); }} title="Pause">
+                    <Pause size={11} />
+                  </button>
+                  <button className="grid h-6 w-6 place-items-center rounded text-red-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStop(); }} title="Stop">
+                    <Square size={11} />
+                  </button>
+                </>
+              )}
+              {isPaused && (
+                <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onResume(); }} title="Resume">
+                  <Play size={11} />
+                </button>
+              )}
+              <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
+                <Trash2 size={11} />
+              </button>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-1 shrink-0">
-          {task.status === "todo" && (
-            <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStart(); }} title="Start">
-              <Play size={11} />
-            </button>
-          )}
-          {isRunning && (
-            <>
-              <button className="grid h-6 w-6 place-items-center rounded text-yellow-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onPause(); }} title="Pause">
-                <Pause size={11} />
-              </button>
-              <button className="grid h-6 w-6 place-items-center rounded text-red-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStop(); }} title="Stop">
-                <Square size={11} />
-              </button>
-            </>
-          )}
-          {isPaused && (
-            <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onResume(); }} title="Resume">
-              <Play size={11} />
-            </button>
-          )}
-          <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
-            <Trash2 size={11} />
-          </button>
+          {/* Full width Prompt & URL */}
+          <div
+            className="w-full space-y-1 select-text cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="break-words whitespace-normal select-text cursor-text text-xs font-medium leading-relaxed">
+              {task.name}
+            </p>
+            <p className="break-all whitespace-normal select-text cursor-text text-[10px] text-zinc-400 leading-normal">
+              {task.targetUrl}
+            </p>
+          </div>
         </div>
-      </div>
+      ) : (
+        /* Collapsed Row */
+        <div className="flex items-center gap-2.5 px-3 py-2">
+          <StatusIcon status={task.status} size={14} />
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium">{task.name}</p>
+            <p className="truncate text-[10px] text-zinc-500">{task.targetUrl}</p>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            {task.status === "todo" && (
+              <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStart(); }} title="Start">
+                <Play size={11} />
+              </button>
+            )}
+            {isRunning && (
+              <>
+                <button className="grid h-6 w-6 place-items-center rounded text-yellow-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onPause(); }} title="Pause">
+                  <Pause size={11} />
+                </button>
+                <button className="grid h-6 w-6 place-items-center rounded text-red-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onStop(); }} title="Stop">
+                  <Square size={11} />
+                </button>
+              </>
+            )}
+            {isPaused && (
+              <button className="grid h-6 w-6 place-items-center rounded text-green-400 hover:bg-white/10 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onResume(); }} title="Resume">
+                <Play size={11} />
+              </button>
+            )}
+            <button className="grid h-6 w-6 place-items-center rounded text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition active:scale-95" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete">
+              <Trash2 size={11} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {active && (
         <div 
-          className="border-t border-white/5 pl-8 pr-3 py-2.5 space-y-2.5 text-zinc-400 text-xs select-text cursor-default"
+          className="border-t border-white/5 px-3 py-2.5 space-y-2.5 text-zinc-400 text-xs select-text cursor-default"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Natural language response block at the top */}

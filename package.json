@@ -1,6 +1,6 @@
 {
   "name": "@alisharjeel/agentqa",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "AI-powered QA automation desktop app with live browser preview, task management, and AI-driven test execution using browser-use",
   "main": "out/main/index.js",
   "bin": {

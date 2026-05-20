@@ -44,9 +44,9 @@ AgentQA operates directly on the DOM, making it compatible with any website or s
 If you prefer to run AgentQA using the React/Electron graphical desktop app with a live visual browser preview:
 
 * Download the installer for your operating system from the [GitHub Releases Page](https://github.com/AliSharjeell/AgentQA/releases).
-  * **Windows**: `AgentQA Setup 0.1.5.exe`
-  * **macOS**: `AgentQA-0.1.5.dmg` (Apple Silicon & Intel)
-  * **Linux**: `AgentQA-0.1.5.AppImage` (Ubuntu, Debian, etc.)
+  * **Windows**: `AgentQA Setup 0.1.6.exe`
+  * **macOS**: `AgentQA-0.1.6.dmg` (Apple Silicon & Intel)
+  * **Linux**: `AgentQA-0.1.6.AppImage` (Ubuntu, Debian, etc.)
 
 ---
 
