@@ -22,48 +22,72 @@ The CLI requires an API key for Anthropic or OpenAI to power its own reasoning e
 
 ## How to use the CLI
 
-The CLI is located in the project's output directory. If it isn't built yet, you may need to build it:
+The CLI is registered globally as `agentqa` after a global installation. If running from the repository source, you can build and use the compiled index:
+
 ```bash
+# Global install (recommended)
+npm install -g .
+
+# Or run from source
 npm run build:cli
+node out/cli/index.js <URL> <PROMPT>
 ```
 
-To run a test, execute the CLI and capture its output:
-```bash
-node out/cli/index.js run --url <URL> --prompt "<YOUR_PROMPT>" --json
-```
+### Subcommands & Syntax
 
-**Testing Modes:**
-- `--mode text` (default): Tells the QA agent to skip visual verifications. Use this since you are a text-only LLM.
-- `--mode vision`: Enforces visual/layout verifications. Only use this if you have multimodal capabilities.
+1. **Run a QA test (Implicit or Explicit `run`)**
+   ```bash
+   # Direct implicit syntax (recommended)
+   agentqa https://example.com "Test the user login" --verbose
+   
+   # Explicit run subcommand syntax
+   agentqa run https://example.com "Test the user login" --json
+   ```
 
-### Prompt Engineering for QA
-- Be specific about what actions to take. (e.g., "Login with user/pass, click the 'Add to Cart' button, and verify the cart count updates.")
-- Ask the engine to look for specific bugs.
+2. **Manage Configuration (`config`)**
+   Launches an interactive wizard to configure settings, or directly sets settings:
+   ```bash
+   # Interactive setup
+   agentqa config
+   
+   # Direct configuration
+   agentqa config --api-key sk-xxxx --provider anthropic --model "Opus 4.7" --vision off
+   ```
+
+3. **Launch Desktop App (`app`)**
+   Spawns the Electron Desktop app GUI directly from the CLI:
+   ```bash
+   agentqa app
+   ```
+
+### Testing Options
+- `--url`: Target URL to test.
+- `--prompt`: QA task description.
+- `--provider`: API provider (`openai` | `anthropic`).
+- `--api-key`: API key override.
+- `--model`: Model override.
+- `--verbose`: Prints step-by-step stdout/stderr progress.
+- `--mode`: Testing mode (`text` | `vision`), defaults to `text`.
+- `--json`: Output final result as JSON to stdout instead of text report.
 
 ### Output Format
-The CLI outputs **structured JSON** to `stdout`. 
-
-Example output:
+The CLI outputs **structured JSON** to `stdout` for agent or pipeline parsing:
 ```json
 {
   "ok": true,
-  "summary": "Successfully logged in. No confirmed bugs found.",
+  "summary": "No confirmed bugs found.",
   "steps": [...],
-  "durationMs": 14200,
-  "url": "http://localhost:3000",
+  "durationMs": 15000,
+  "url": "https://example.com",
   "error": null
 }
 ```
 
-If `ok` is `true`, the test passed. If `false`, the test failed or an error occurred. 
-Read the `summary` field to understand the final result of the test.
-
 ## Example Execution
-
 ```bash
-# Export the key (if not already in environment or .env)
-export QA_API_KEY=sk-ant-12345
+# Setup your credentials
+agentqa config --api-key sk-ant-12345 --provider anthropic
 
-# Run the test
-node out/cli/index.js run --url "http://localhost:3000" --prompt "Click the signup button, fill in a test email, and submit."
+# Execute a test
+agentqa https://practicetestautomation.com/practice-test-login/ "Test valid login with student/Password123" --verbose
 ```

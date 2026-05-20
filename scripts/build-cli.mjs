@@ -7,7 +7,10 @@ buildSync({
   target: "node18",
   format: "esm",
   outfile: "out/cli/index.js",
-  external: ["electron"]
+  external: ["electron"],
+  banner: {
+    js: "#!/usr/bin/env node"
+  }
 });
 
 console.log("✓ CLI built → out/cli/index.js");

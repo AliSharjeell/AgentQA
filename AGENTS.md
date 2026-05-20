@@ -69,30 +69,40 @@ src/
 
 ## AgentQA CLI for Coding Agents
 
-If you are an AI coding agent operating in a terminal, you can use the `agentqa` CLI to verify your own code changes!
+If you are an AI coding agent operating in a terminal, you can use the global `agentqa` CLI to verify your own code changes!
 
 ### Installation
-The CLI is built using `esbuild`. 
+Install the CLI globally from the project root:
 ```bash
-npm run build:cli
+npm install -g .
 ```
 
 ### Usage
 ```bash
-node out/cli/index.js run --url http://localhost:3000 --prompt "Test the signup flow" --verbose
+# Direct run
+agentqa http://localhost:3000 "Test the signup flow" --verbose
 
-# Use vision mode if you have a multimodal LLM to check images/layout
-node out/cli/index.js run --url http://localhost:3000 --prompt "Verify layout" --mode vision
+# Explicit subcommand run
+agentqa run http://localhost:3000 "Verify layout" --mode vision
 ```
 
 ### Configuration
-The CLI reads from `%APPDATA%/agentqa/settings.json`, or environment variables:
+Configure settings interactively or directly:
+```bash
+# Run the configuration wizard
+agentqa config
+
+# Set configuration options directly
+agentqa config --api-key sk-xxxx --provider anthropic --model "Opus 4.7" --vision off
+```
+
+The settings are persisted in `%APPDATA%/agentqa/settings.json`. You can also override configuration via environment variables:
 - `QA_API_PROVIDER` (anthropic | openai)
 - `QA_API_KEY`
 - `QA_API_MODEL`
 
 ### Output
-The CLI outputs structured JSON to `stdout` (so you can parse it with `jq`) and human-readable progress to `stderr` (if `--verbose` is used).
+The CLI outputs structured JSON to `stdout` and human-readable progress to `stderr` (if `--verbose` is used).
 
 ```json
 {

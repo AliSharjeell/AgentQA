@@ -13,18 +13,14 @@
     "build:cli": "node scripts/build-cli.mjs",
     "typecheck": "tsc --noEmit",
     "typecheck:cli": "tsc --noEmit -p tsconfig.cli.json",
-    "start": "electron-vite preview"
+    "start": "electron-vite preview",
+    "prepare": "npm run build && npm run build:cli",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win --dir"
   },
+  "author": "AgentQA Team",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.36.3",
-    "@vitejs/plugin-react": "^4.3.4",
-    "anthropic": "^0.0.0",
-    "browser-use": "^0.6.1",
-    "chromium-bidi": "^0.5.24",
-    "electron": "^34.0.2",
-    "electron-vite": "^3.0.0",
     "lucide-react": "^0.468.0",
-    "openai": "^4.104.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
@@ -34,11 +30,35 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "electron": "^34.0.2",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^3.0.0",
     "esbuild": "^0.28.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
+  },
+  "build": {
+    "appId": "com.agentqa.app",
+    "productName": "AgentQA",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }

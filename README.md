@@ -39,18 +39,17 @@ npm run dev
 
 Opens an Electron window with a sidebar for tasks and a live browser preview. Configure your API key in **Settings**, then create a task with a URL and prompt.
 
-### CLI (for Coding Agents)
+### CLI (for Coding Agents & CI)
 
 ```bash
-# Build the CLI
-npm run build:cli
+# Install globally
+npm install -g .
 
-# Run a QA task
-node out/cli/index.js run \
-  --url https://saucedemo.com \
-  --prompt "Login with standard_user/secret_sauce, add 2 items to cart, complete checkout" \
-  --api-key sk-ant-xxx \
-  --verbose
+# Setup credentials
+agentqa config
+
+# Run a QA task (direct implicit syntax)
+agentqa https://saucedemo.com "Login with standard_user/secret_sauce, add 2 items to cart, complete checkout" --verbose
 ```
 
 ---
@@ -58,22 +57,32 @@ node out/cli/index.js run \
 ## CLI Usage
 
 ```
-agentqa run --url <URL> --prompt <PROMPT> [options]
-
-Options:
-  --url        Target URL to test (required)
-  --prompt     QA task description (required)
-  --provider   API provider: openai | anthropic (default: from settings)
-  --api-key    API key (default: from settings or $QA_API_KEY)
-  --model      Model name (default: from settings)
-  --mode       Testing mode: text | vision (default: text)
-  --verbose    Print step progress to stderr
-  --timeout    Max seconds (default: 120)
+agentqa <URL> <PROMPT> [options]
+agentqa run <URL> <PROMPT> [options]
+agentqa config [options]
+agentqa app
 ```
+
+### Subcommands
+
+* **`run` (Default)**: Run QA tests. Can be omitted if positional URL and prompt are provided.
+* **`config`**: Setup credentials interactively or via CLI flags (e.g. `agentqa config --api-key sk-xx --provider anthropic --vision off`).
+* **`app`**: Spawns the Electron Desktop App GUI window.
+
+### Options:
+* `--url`: Target URL to test (can be a positional argument)
+* `--prompt`: QA task description (can be a positional argument)
+* `--provider`: API provider: `openai` | `anthropic`
+* `--api-key`: API key override
+* `--model`: LLM model name override
+* `--mode`: Testing mode: `text` | `vision` (default: `text`)
+* `--verbose`: Print step-by-step progress to stderr
+* `--timeout`: Max seconds per step (default: `120`)
+* `--json`: Output structured JSON directly to stdout
 
 ### Output Format
 
-**stdout** — structured JSON for agent consumption:
+**stdout** — structured JSON for agent and CI parsing:
 
 ```json
 {
@@ -97,15 +106,15 @@ Options:
 ### Agent Integration Example
 
 ```bash
-# Use with environment variable
-export QA_API_KEY=sk-ant-xxx
+# Setup API key
+agentqa config --api-key sk-ant-xxx --provider anthropic
 
-# Pipe result to jq
-result=$(node out/cli/index.js run --url https://staging.myapp.com --prompt "Test the signup form")
+# Pipe result to jq in a script
+result=$(agentqa https://staging.myapp.com "Test signup form")
 echo $result | jq '.ok'
 
-# In a CI script
-if node out/cli/index.js run --url "$PREVIEW_URL" --prompt "Verify login and dashboard"; then
+# Use in a CI script
+if agentqa https://staging.myapp.com "Verify login and dashboard"; then
   echo "QA passed"
 else
   echo "QA failed"
