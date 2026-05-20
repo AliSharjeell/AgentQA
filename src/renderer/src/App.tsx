@@ -365,9 +365,16 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
       <div className="flex items-center gap-2.5 px-3 py-2">
         <StatusIcon status={task.status} size={14} />
 
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium">{task.name}</p>
-          <p className={`truncate text-[10px] ${active ? "text-zinc-300" : "text-zinc-500"}`}>{task.targetUrl}</p>
+        <div
+          className="min-w-0 flex-1"
+          onClick={(e) => { if (active) e.stopPropagation(); }}
+        >
+          <p className={`${active ? "break-words whitespace-normal select-text cursor-text" : "truncate"} text-xs font-medium`}>
+            {task.name}
+          </p>
+          <p className={`${active ? "break-all whitespace-normal select-text cursor-text text-zinc-300" : "truncate text-zinc-500"} text-[10px]`}>
+            {task.targetUrl}
+          </p>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
