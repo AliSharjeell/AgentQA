@@ -39,7 +39,7 @@ AgentQA operates directly on the DOM, making it compatible with any website or s
 
 ### Installation & Setup
 
-#### Option A: NPM Global Installation (Recommended)
+#### Option A: CLI Installation (NPM Global)
 
 If you are using AgentQA for coding agents (e.g., Claude Code, Cline), CI/CD pipelines, or command-line testing:
 
@@ -56,28 +56,7 @@ agentqa https://saucedemo.com "Login with standard_user/secret_sauce, add 2 item
 
 ---
 
-#### Option B: Local CLI Installation (From Source)
-
-If you have cloned the repository and want to run your local code changes globally as the `agentqa` command:
-
-```bash
-# 1. Install dependencies
-npm install
-
-# 2. Build the CLI package
-npm run build:cli
-
-# 3. Link the package globally
-npm link
-
-# 4. Run the wizard or start testing!
-agentqa config
-agentqa https://saucedemo.com "Verify homepage elements"
-```
-
----
-
-#### Option C: Desktop GUI App (Pre-built Installers)
+#### Option B: Desktop GUI App (Pre-built Installers)
 
 If you prefer to run AgentQA using the React/Electron graphical desktop app with a live visual browser preview:
 
@@ -85,6 +64,26 @@ If you prefer to run AgentQA using the React/Electron graphical desktop app with
   * **Windows**: `AgentQA Setup 0.1.4.exe`
   * **macOS**: `AgentQA-0.1.4.dmg` (Apple Silicon & Intel)
   * **Linux**: `AgentQA-0.1.4.AppImage` (Ubuntu, Debian, etc.)
+
+---
+
+#### Option C: Running from Source (Development)
+
+If you have cloned the repository and want to run or develop AgentQA locally:
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Start the Desktop GUI App in development mode
+npm run dev
+
+# 3. Or build the CLI entry point
+npm run build:cli
+
+# 4. Link the package globally to test CLI modifications
+npm link
+```
 
 ---
 
