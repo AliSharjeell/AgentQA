@@ -82,9 +82,9 @@ agentqa https://saucedemo.com "Verify homepage elements"
 If you prefer to run AgentQA using the React/Electron graphical desktop app with a live visual browser preview:
 
 * Download the installer for your operating system from the [GitHub Releases Page](https://github.com/AliSharjeell/AgentQA/releases).
-  * **Windows**: `AgentQA Setup 0.1.3.exe`
-  * **macOS**: `AgentQA-0.1.3.dmg` (Apple Silicon & Intel)
-  * **Linux**: `AgentQA-0.1.3.AppImage` (Ubuntu, Debian, etc.)
+  * **Windows**: `AgentQA Setup 0.1.4.exe`
+  * **macOS**: `AgentQA-0.1.4.dmg` (Apple Silicon & Intel)
+  * **Linux**: `AgentQA-0.1.4.AppImage` (Ubuntu, Debian, etc.)
 
 ---
 

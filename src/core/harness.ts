@@ -1,6 +1,9 @@
-import { spawn } from 'node:child_process';
+import { spawn, exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
+
+const execAsync = promisify(exec);
 
 export interface HarnessStepEvent {
   instruction: string;
@@ -113,13 +116,49 @@ export function resolveBrowserHarnessCommand(): ResolvedCommand {
   return { executable: 'browser-harness', args: [] };
 }
 
+export async function ensureBrowserHarnessInstalled(): Promise<boolean> {
+  const resolved = resolveBrowserHarnessCommand();
+  if (resolved.executable !== 'browser-harness' && fs.existsSync(resolved.executable)) {
+    return true;
+  }
+  // Check if browser-harness is on PATH
+  try {
+    const checkCmd = process.platform === 'win32' ? 'where browser-harness' : 'which browser-harness';
+    await execAsync(checkCmd);
+    return true;
+  } catch {
+    // Not found
+  }
+
+  // Not found. Attempt to install via uv
+  try {
+    console.log("Browser-harness not found. Attempting to install via uv...");
+    await execAsync('uv tool install git+https://github.com/browser-use/browser-harness');
+    console.log("Browser-harness successfully installed via uv.");
+    return true;
+  } catch {
+    try {
+      console.log("uv failed or not found. Attempting to install via pip...");
+      await execAsync('pip install git+https://github.com/browser-use/browser-harness');
+      console.log("Browser-harness successfully installed via pip.");
+      return true;
+    } catch (err) {
+      console.error("Could not auto-install browser-harness:", err);
+      return false;
+    }
+  }
+}
+
 export function runHarnessScript(
   script: string,
   onStep: (event: HarnessStepEvent) => void,
   cdpUrl?: string,
   timeoutMs: number = 120000
 ): Promise<HarnessResult> {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
+    // Ensure browser-harness is installed/available at runtime
+    await ensureBrowserHarnessInstalled();
+
     const { executable, args } = resolveBrowserHarnessCommand();
     const env: Record<string, string | undefined> = { ...process.env };
     if (cdpUrl) {
