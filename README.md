@@ -246,16 +246,17 @@ The AI agent follows these rules when testing:
 
 ---
 
-## AI Agent Skill (for Claude Code, Cline, etc.)
+## AI Agent Skill (for Antigravity, Claude Code, Codex, Cline, etc.)
 
 We provide a built-in skill so that AI coding assistants can learn how to use the `agentqa` CLI directly within your codebase. This allows agents to autonomously verify their own code changes!
 
-To install the skill for your agent (e.g., in Claude Code):
-```bash
-claude install file://skills/agentqa-cli
-```
+### How Agents Use It
+Because the skill is located in the `skills/agentqa-cli/` directory of the repository:
+- **Antigravity / Codex**: Automatically discovers and loads the skill from the workspace root.
+- **Claude Code**: Reads and adopts instructions from the local `skills/` directory and `AGENTS.md` automatically when running in this project.
+- **Other Agents**: If using an extension (like Cline or Roo Code), you can import the custom skill instructions from `skills/agentqa-cli/SKILL.md`.
 
-*(This will teach the agent how to run `agentqa` and how to interpret the JSON output).*
+*(This teaches the agent how to run `agentqa` and how to interpret the JSON output).*
 
 ---
 
