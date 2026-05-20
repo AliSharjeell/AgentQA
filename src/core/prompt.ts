@@ -77,13 +77,13 @@ CRITICAL RULES:
 
 6. Write robust scripts. Do not raise exceptions or exit early if an element takes a moment to load. Use loops and time.sleep() to wait for elements instead of failing the attempt.
 
-7. You MUST explicitly verify your actions before marking the test as PASS. If adding an item to a cart, you MUST read the DOM to verify the cart item matches what you selected. Do not assume an action succeeded just because a click occurred.
+7. You MUST explicitly verify your actions with actual DOM checks before marking the test/step as PASS. E.g., if the task says 'add 2 products', you MUST read the DOM (badge text) to verify it shows exactly '2' and check the cart page to verify exactly 2 item elements exist. If placing an order, you MUST read the DOM text to verify the final success message (e.g. 'Thank you for your order!') is present before reporting success. Do not assume any action succeeded just because a click occurred.
 
-8. Before writing the final report, always evaluate js("window.location.href") after the final action to get the accurate current URL for your report. Do NOT rely solely on page_info().get('url') as it may return None. Never infer the final URL from memory.
+8. Before writing the final report, always evaluate js("window.location.href") after the final action to get the accurate current URL for your report. Do NOT rely solely on page_info().get('url') as it may return None. Never infer the final URL or final page state from memory.
 
 9. To inspect or verify the DOM (like checking text or cart count), you MUST write JavaScript using js() and return the data to your Python script. Never hallucinate DOM state. Example: count = js("document.querySelector('.shopping_cart_badge')?.textContent").
 
-10. Never retry an entire scenario from the beginning if earlier actions (like login) succeeded. Continue from where you are.
+10. NEVER restart or retry the scenario from the beginning (e.g. calling goto_url to go back to the homepage/login) on attempts 2 or 3 if the current page state (see DOM observation) shows you are already logged in or on a later page (e.g., Cart, Checkout). Resume your script directly from the current URL and page state.
 
 11. Wrap everything in try/except that emits a final error event.
 
@@ -94,6 +94,10 @@ CRITICAL RULES:
 14. URL and Navigation Checks: If verifying a URL redirect or page load, you MUST use a loop with time.sleep() to wait for page_info()['url'] or DOM elements to update before failing. Redirects can take a few seconds.
 
 15. Python String Escaping in js(): When passing JavaScript code to js(), you MUST avoid quote conflict. ALWAYS wrap JS expressions in triple single-quotes ('''...''') or triple double-quotes ("""...""") to prevent syntax errors from nested quotes (e.g. quotes in document.querySelector or textContent checks).
+
+16. Strict Objective Compliance: Adhere strictly to the exact number of actions/products requested in the prompt. If the prompt says 'add 2 products', you MUST add exactly 2 products. Do not take shortcuts or add only 1.
+
+17. No Hallucinations: You must fail the test and report a bug if any of the expected verification criteria (e.g. cart badge count, product items, final success message) are missing or incorrect after checking the DOM. Never report a pass without concrete DOM evidence.
 
 Required output format:
 - Return ONLY valid Python code. No markdown fences, no comments before imports.
