@@ -78,6 +78,27 @@ npm run dev
 
 ---
 
+### Option C: Local CLI Installation (For Development/Testing)
+
+If you have cloned the repository and want to run your local code changes globally as the `agentqa` command:
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Build the CLI package
+npm run build:cli
+
+# 3. Link the package globally
+npm link
+
+# 4. Run the wizard or start testing!
+agentqa config
+agentqa https://saucedemo.com "Verify homepage elements"
+```
+
+---
+
 ## CLI Usage
 
 ```
@@ -188,9 +209,21 @@ scripts/
 4. **Retry** — If the script fails, retries up to 3 times with the error context
 5. **Report** — Returns structured results with pass/fail, step details, and a summary
 
+### Page Text Reading & Extraction
+
+AgentQA has full page reading and visual understanding capabilities:
+* **DOM Scraper (Text Mode)**: Automatically extracts and parses text contents, table headers, paragraph tags, placeholder text, values, and accessibility labels from the page. This is formatted into a clean text-based structural representation for the LLM.
+* **Visual Verification (Vision Mode)**: When configured in vision mode (`--mode vision`), the tool takes screenshot captures of the browser viewport at each execution step. This allows the LLM to inspect visual layouts, read rendered/stylized text, check imagery, and detect visual regression/bugs.
+
+### Human-Like Observable Typing
+
+To make browser actions clear and observable in the live preview window:
+* **Progressive Typing**: Input fields are populated character-by-character with a slight dynamic typing delay (defaults to 30ms per character). This avoids instantaneous text snaps and lets developers watch inputs as they happen.
+* **Length-Based Scaling**: Typing speed dynamically scales for long inputs (e.g. descriptions, JSON text) to prevent blocking the test pipeline, capping the duration for any single text block at 1.5 seconds.
+
 ### Key Design Decisions
 
-- **`set_value()` over `fill_input()`** — Uses JavaScript to set input values (via prototype descriptor + event dispatch) instead of CDP key events, which avoids double-typing in Electron's BrowserView
+- **`set_value()` over `fill_input()`** — Uses JavaScript to set input values progressively (via prototype descriptor + event dispatch) instead of CDP key events, which avoids double-typing in Electron's BrowserView
 - **No browser bundled** — Uses `browser-harness` which manages its own Chrome daemon. No Playwright browser download required
 - **Shared engine** — `src/core/` has zero Electron imports, so it works in both the desktop app and headless CLI
 
@@ -274,11 +307,29 @@ Because the skill is located in the `skills/agentqa-cli/` directory of the repos
 
 *(This teaches the agent how to run `agentqa` and how to interpret the JSON output).*
 
+### Installing Globally in Claude Code
+
+If you want the `agentqa-cli` skill to be available to Claude Code globally across all your projects, copy the skill folder to Claude's global skills directory:
+
+* **Windows**:
+  ```powershell
+  xcopy /E /I skills\agentqa-cli %USERPROFILE%\.claude\skills\agentqa-cli
+  ```
+* **macOS / Linux**:
+  ```bash
+  cp -r skills/agentqa-cli ~/.claude/skills/agentqa-cli
+  ```
+
 ### Fetching the Skill in Other Repositories
-If you want to use the AgentQA skill in a different repository, you can copy-paste this prompt to your AI agent (e.g. Claude Code, Cline, Antigravity) to fetch and install it:
 
-> "Please download the AgentQA CLI skill configuration from \`https://raw.githubusercontent.com/AliSharjeell/AgentQA/master/skills/agentqa-cli/SKILL.md\` and save it locally in my project at \`skills/agentqa-cli/SKILL.md\`. After downloading, read the skill guidelines to understand how to verify my code changes using the global \`agentqa\` command."
+If you want to install or reference the AgentQA skill in another workspace, you can instruct your agent using local file paths or web URLs:
 
+* **Via File URI (Antigravity/Codex)**:
+  Provide the path using the `file://` scheme to point directly to the skill template:
+  `file:///C:/Users/alish/.claude/skills/agentqa-cli/SKILL.md`
+* **Via Web URL**:
+  Ask the agent to download the raw skill from GitHub:
+  > "Please download the AgentQA CLI skill configuration from \`https://raw.githubusercontent.com/AliSharjeell/AgentQA/master/skills/agentqa-cli/SKILL.md\` and save it locally in my project at \`skills/agentqa-cli/SKILL.md\`. After downloading, read the skill guidelines to understand how to verify my code changes using the global \`agentqa\` command."
 
 ---
 

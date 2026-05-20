@@ -35,14 +35,15 @@ interface ResolvedCommand {
 }
 
 // The set_value Python preamble that gets prepended to every script.
-// Uses JavaScript to set input values — bypasses Electron's CDP double-typing bug.
+// Uses JavaScript to set input values progressively, making it observable in live preview and bypassing Electron's CDP double-typing bug.
 const SET_VALUE_PREAMBLE = `
 import json as _json
+import time as _time
 
 def set_value(selector, text):
-    """Set an input's value via JavaScript — works in React, Vue, and vanilla HTML."""
+    """Set an input's value progressively via JavaScript — works in React, Vue, and vanilla HTML."""
     _sel = _json.dumps(selector)
-    _val = _json.dumps(text)
+    # Clear the input first
     js(f"""(() => {{
         const el = document.querySelector({_sel});
         if (!el) throw new Error('set_value: element not found: ' + {_sel});
@@ -51,13 +52,46 @@ def set_value(selector, text):
             || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
             || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
         if (descriptor && descriptor.set) {{
-            descriptor.set.call(el, {_val});
+            descriptor.set.call(el, '');
         }} else {{
-            el.value = {_val};
+            el.value = '';
         }}
         el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    }})()""")
+    
+    _len = len(text)
+    if _len == 0:
+        return
+        
+    # Dynamically scale typing delay so long texts don't block tests
+    _delay = 0.03 if _len <= 50 else (1.5 / _len)
+    
+    _current = ""
+    for _char in text:
+        _current += _char
+        _val = _json.dumps(_current)
+        js(f"""(() => {{
+            const el = document.querySelector({_sel});
+            if (!el) return;
+            const proto = Object.getPrototypeOf(el);
+            const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
+                || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+                || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+            if (descriptor && descriptor.set) {{
+                descriptor.set.call(el, {_val});
+            }} else {{
+                el.value = {_val};
+            }}
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+        }})()""")
+        _time.sleep(_delay)
+        
+    # Final event dispatch for change/blur
+    js(f"""(() => {{
+        const el = document.querySelector({_sel});
+        if (!el) return;
         el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-    }})()""");
+    }})()""")
 
 `;
 
