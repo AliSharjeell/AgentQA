@@ -110,7 +110,11 @@ agentqa config [options]
 * `--provider`: API provider: `openai` | `anthropic`
 * `--api-key`: API key override
 * `--model`: LLM model name override
+* `--base-url`: API base URL override
 * `--mode`: Testing mode: `text` | `vision` (default: `text`)
+* `--agent-mode`: Harness executor mode: `standard` | `browser-use` | `advanced` (default: `standard`)
+* `--allow-escalation`: Allow executor switch requests outside advanced mode
+* `--max-steps`: Maximum agent loop steps (default: `25`)
 * `--verbose`: Print step-by-step progress to stderr
 * `--timeout`: Max seconds per step (default: `120`)
 * `--json`: Output structured JSON directly to stdout
@@ -205,11 +209,12 @@ If you want to install or reference the AgentQA skill in another workspace, you 
 ```
 src/
 ├── core/                    # Shared engine (no Electron dependency)
-│   ├── settings.ts          # Load/save settings.json
 │   ├── api.ts               # OpenAI / Anthropic LLM callers
-│   ├── prompt.ts            # LLM prompt template for browser automation
+│   ├── engine.ts            # Orchestrator: observe → LLM → act → retry
+│   ├── executor.ts          # Execution harness (standard / browser-use / advanced)
 │   ├── harness.ts           # browser-harness spawner + set_value preamble
-│   └── engine.ts            # Orchestrator: observe → LLM → act → retry
+│   ├── prompt.ts            # LLM prompt template for browser automation
+│   └── settings.ts          # Load/save settings.json
 ├── cli/                     # Headless CLI frontend
 │   └── index.ts             # Arg parser, runner, JSON output
 ├── main/                    # Electron desktop app (main process)
@@ -228,7 +233,10 @@ src/
 ├── shared/                  # Types shared across all targets
 │   └── types.ts
 scripts/
-└── build-cli.mjs            # esbuild bundler for CLI
+├── build-cli.mjs            # esbuild bundler for CLI
+└── welcome.js               # Post-install welcome banner
+skills/
+└── agentqa-cli/             # Claude Code / agent skill for CLI integration
 ```
 
 ---
@@ -287,8 +295,14 @@ To make browser actions clear and observable in the live preview window:
 ## Available Scripts
 
 ```bash
-npm run build:cli    # Bundle CLI to out/cli/index.js
-npm run typecheck:cli  # TypeScript check (CLI only)
+npm run dev              # Start Electron app in development mode
+npm run build            # Build full app (TypeScript check + Electron + CLI)
+npm run build:cli        # Bundle CLI only to out/cli/index.js
+npm run typecheck        # Full TypeScript check (all targets)
+npm run typecheck:cli   # TypeScript check (CLI only)
+npm run dist             # Build distributable installers (electron-builder)
+npm run dist:win        # Build Windows installer only
+npm start               # Preview built Electron app
 ```
 
 ---
@@ -302,7 +316,8 @@ Settings are stored in `%APPDATA%/agentqa/settings.json`:
   "apiProvider": "anthropic",
   "apiKey": "sk-ant-xxx",
   "apiBaseUrl": "",
-  "model": "claude-sonnet-4-20250514"
+  "model": "claude-sonnet-4-20250514",
+  "visionMode": false
 }
 ```
 
