@@ -23,34 +23,42 @@ AI-powered QA testing tool that explores websites, fills forms, clicks buttons, 
 - **browser-harness** — `uv tool install git+https://github.com/browser-use/browser-harness`
 - An API key for **OpenAI** or **Anthropic**
 
-### Install
+---
+
+### Option A: Headless CLI (NPM Global)
+
+If you are using AgentQA for coding agents (e.g., Claude Code, Cline), CI/CD pipelines, or command-line testing:
 
 ```bash
-git clone https://github.com/AliSharjeell/AgentQA.git
-cd AgentQA
-npm install
+# 1. Install globally from npm
+npm install -g @alisharjeel/agentqa
+
+# 2. Run the configuration wizard
+agentqa config
+
+# 3. Start testing immediately!
+agentqa https://saucedemo.com "Login with standard_user/secret_sauce, add 2 items, checkout" --verbose
 ```
 
-### Desktop App
+---
+
+### Option B: Desktop GUI App (Clone & Dev)
+
+If you want the full React/Electron graphical interface with live interactive browser preview:
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/AliSharjeell/AgentQA.git
+cd AgentQA
+
+# 2. Install dependencies (installs Electron)
+npm install
+
+# 3. Launch the desktop app
 npm run dev
 ```
 
-Opens an Electron window with a sidebar for tasks and a live browser preview. Configure your API key in **Settings**, then create a task with a URL and prompt.
-
-### CLI (for Coding Agents & CI)
-
-```bash
-# Install globally
-npm install -g @alisharjeel/agentqa
-
-# Setup credentials
-agentqa config
-
-# Run a QA task (direct implicit syntax)
-agentqa https://saucedemo.com "Login with standard_user/secret_sauce, add 2 items to cart, complete checkout" --verbose
-```
+*Alternatively, you can build and package a standalone executable for your OS by running `npm run dist`.*
 
 ---
 
