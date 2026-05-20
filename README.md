@@ -1,5 +1,7 @@
 # AgentQA
 
+![AgentQA Demo](public/demo.gif)
+
 AI-powered QA testing tool that explores websites, fills forms, clicks buttons, and finds bugs — automatically. Available as a **desktop app** with live browser preview and as a **headless CLI** for coding agents.
 
 ---
