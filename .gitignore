@@ -18,6 +18,7 @@ outreach-store.json
 
 # Screenshots and temp test outputs
 *.png
+!public/*.png
 *screenshot*.png
 *test*.json
 !package.json
