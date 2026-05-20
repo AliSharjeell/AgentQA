@@ -101,6 +101,10 @@ agentqa https://saucedemo.com "Verify homepage elements"
 
 ## CLI Usage
 
+<p align="center">
+  <img src="public/cli.png" alt="AgentQA CLI" width="800" />
+</p>
+
 ```
 agentqa <URL> <PROMPT> [options]
 agentqa run <URL> <PROMPT> [options]
