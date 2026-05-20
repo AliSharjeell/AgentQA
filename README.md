@@ -1,7 +1,5 @@
-<h1 align="center">AgentQA</h1>
-
 <p align="center">
-  <img src="public/mainpic.png" alt="AgentQA" width="800" />
+  <img src="public/newmainpic.png" alt="AgentQA" width="800" />
 </p>
 
 <p align="center">
