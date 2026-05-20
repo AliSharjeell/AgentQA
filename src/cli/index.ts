@@ -417,6 +417,7 @@ EXAMPLES:
       process.stdout.write(`FINAL URL: ${r.finalUrl || "Unknown"}\n`);
       process.stdout.write(`SCREENSHOTS: ${r.screenshots?.join(", ") || "None"}\n`);
       process.stdout.write(`CONSOLE ERRORS: ${r.consoleErrors?.join(", ") || "None"}\n`);
+      process.stdout.write(`FAULT LOG: ${r.faultLog?.map((fault) => `[${fault.severity}/${fault.type}] ${fault.title}: ${fault.details}`).join(" | ") || "None"}\n`);
       process.stdout.write(`FIX RECOMMENDATIONS: ${r.fixRecommendations?.join(", ") || "None"}\n`);
     } else {
       log("");

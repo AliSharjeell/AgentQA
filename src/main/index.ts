@@ -184,7 +184,7 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
       })),
       screenshots: r?.screenshots ?? [],
       aiReasoning: r 
-        ? `Scenario: ${r.scenario}\n\nConfirmed Bugs: ${r.confirmedBugs.join(', ') || 'None'}\n\nFix Recommendations: ${r.fixRecommendations.join(', ') || 'None'}`
+        ? `Scenario: ${r.scenario}\n\nConfirmed Bugs: ${r.confirmedBugs.join(', ') || 'None'}\n\nFault Log: ${r.faultLog?.map((fault) => `[${fault.severity}/${fault.type}] ${fault.title}: ${fault.details}`).join(' | ') || 'None'}\n\nFix Recommendations: ${r.fixRecommendations.join(', ') || 'None'}`
         : "Executed by browser-harness against the embedded preview browser via CDP."
     };
 
