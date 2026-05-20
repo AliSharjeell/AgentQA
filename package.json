@@ -10,6 +10,14 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AliSharjeell/AgentQA.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AliSharjeell/AgentQA/issues"
+  },
+  "homepage": "https://github.com/AliSharjeell/AgentQA#readme",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
