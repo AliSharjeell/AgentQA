@@ -16,7 +16,8 @@ export function loadSettings(baseDir?: string): AppSettings {
     apiProvider: 'anthropic',
     apiKey: '',
     apiBaseUrl: '',
-    model: 'claude-sonnet-4-20250514'
+    model: 'claude-sonnet-4-20250514',
+    visionMode: false
   };
 }
 

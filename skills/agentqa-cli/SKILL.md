@@ -29,8 +29,12 @@ npm run build:cli
 
 To run a test, execute the CLI and capture its output:
 ```bash
-node out/cli/index.js run --url <URL> --prompt "<YOUR_PROMPT>"
+node out/cli/index.js run --url <URL> --prompt "<YOUR_PROMPT>" --json
 ```
+
+**Testing Modes:**
+- `--mode text` (default): Tells the QA agent to skip visual verifications. Use this since you are a text-only LLM.
+- `--mode vision`: Enforces visual/layout verifications. Only use this if you have multimodal capabilities.
 
 ### Prompt Engineering for QA
 - Be specific about what actions to take. (e.g., "Login with user/pass, click the 'Add to Cart' button, and verify the cart count updates.")

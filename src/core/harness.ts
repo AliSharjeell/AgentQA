@@ -174,6 +174,12 @@ try:
     import time
     time.sleep(1)
     info = page_info()
+    if not info:
+        info = {}
+    if not info.get("url"):
+        info["url"] = js("window.location.href")
+    if not info.get("title"):
+        info["title"] = js("document.title")
     emit({"instruction": "Open " + target_url, "status": "done", "result": "Loaded " + info.get("url", target_url)})
 
     emit({"instruction": "Inspect DOM", "status": "running"})

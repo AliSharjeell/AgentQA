@@ -33,6 +33,7 @@ export interface AppSettings {
   apiKey: string;
   apiBaseUrl: string;
   model: string;
+  visionMode?: boolean;
 }
 
 // ─── Browser ───────────────────────────────────────────────────────────────

@@ -80,6 +80,9 @@ npm run build:cli
 ### Usage
 ```bash
 node out/cli/index.js run --url http://localhost:3000 --prompt "Test the signup flow" --verbose
+
+# Use vision mode if you have a multimodal LLM to check images/layout
+node out/cli/index.js run --url http://localhost:3000 --prompt "Verify layout" --mode vision
 ```
 
 ### Configuration

@@ -38,7 +38,7 @@ Available helper functions (all synchronous, already in global scope):
 Navigation & Page:
 - goto_url(url)                    # Navigate to URL
 - wait_for_load()                  # Wait for page load event
-- page_info() -> dict              # Returns {"url", "title", "w", "h"}
+- page_info() -> dict              # Returns {"url", "title", "w", "h"} (Note: url and title may be None. Prefer js("window.location.href") and js("document.title"))
 - js(expression) -> any            # Evaluate JavaScript, returns result
 
 Form Input (USE set_value for ALL text/password/email/search fields):
@@ -79,13 +79,21 @@ CRITICAL RULES:
 
 7. You MUST explicitly verify your actions before marking the test as PASS. If adding an item to a cart, you MUST read the DOM to verify the cart item matches what you selected. Do not assume an action succeeded just because a click occurred.
 
-8. Before writing the final report, always call page_info() after the final action to get the accurate current URL for your report. Never infer the final URL from memory.
+8. Before writing the final report, always evaluate js("window.location.href") after the final action to get the accurate current URL for your report. Do NOT rely solely on page_info().get('url') as it may return None. Never infer the final URL from memory.
 
 9. To inspect or verify the DOM (like checking text or cart count), you MUST write JavaScript using js() and return the data to your Python script. Never hallucinate DOM state. Example: count = js("document.querySelector('.shopping_cart_badge')?.textContent").
 
 10. Never retry an entire scenario from the beginning if earlier actions (like login) succeeded. Continue from where you are.
 
 11. Wrap everything in try/except that emits a final error event.
+
+12. CSS Selectors: ONLY use standard CSS selectors for querySelector(). NEVER use non-standard selectors like :contains() or :has-text(). To find elements by text, use standard JS like: Array.from(document.querySelectorAll('a, button')).find(e => e.textContent.toLowerCase().includes('log out') || e.textContent.toLowerCase().includes('logout'))
+
+13. JS Dialogs (Alert/Confirm/Prompt): Browser dialogs will freeze the page. Before clicking any element that triggers a dialog, you MUST mock the dialog functions via js(). Example: js('window.alert = () => {}; window.confirm = () => true; window.prompt = () => "test";')
+
+14. URL and Navigation Checks: If verifying a URL redirect or page load, you MUST use a loop with time.sleep() to wait for page_info()['url'] or DOM elements to update before failing. Redirects can take a few seconds.
+
+15. Python String Escaping in js(): When passing JavaScript code to js(), you MUST avoid quote conflict. ALWAYS wrap JS expressions in triple single-quotes ('''...''') or triple double-quotes ("""...""") to prevent syntax errors from nested quotes (e.g. quotes in document.querySelector or textContent checks).
 
 Required output format:
 - Return ONLY valid Python code. No markdown fences, no comments before imports.
@@ -103,7 +111,7 @@ Required output format:
       "warnings": ["warning 1"],
       "stepsExecuted": ["step 1", "step 2"],
       "evidence": ["evidence 1"],
-      "finalUrl": "https://...",
+      "finalUrl": "<insert current URL from js('window.location.href') here>",
       "screenshots": [],
       "consoleErrors": [],
       "fixRecommendations": ["fix 1"]
@@ -114,7 +122,7 @@ Agent Instructions:
 - Open the target URL with goto_url(), wait_for_load(), time.sleep(1).
 - Use set_value() for ALL form fields.
 - Use click_at_xy() only for buttons/links. Always extract int x,y from js() result dict.
-- After submitting forms, wait_for_load() + time.sleep(1) + verify with page_info().
+- After submitting forms, wait_for_load() + time.sleep(1) + verify with js('window.location.href').
 - Never report a bug unless verified twice after waiting and scrolling. For dynamic loading, use loops and time.sleep() to wait. Do not mark slow loading as a bug if it eventually loads.
 - A scenario can complete successfully but still be FAIL if confirmed bugs are found.
 ${visionRules}
@@ -150,8 +158,8 @@ try:
         press_key('Enter')
     wait_for_load()
     time.sleep(1)
-    info = page_info()
-    emit({'instruction': 'Click login button', 'status': 'done', 'result': 'Now at ' + info.get('url', '')})
+    current_url = js('window.location.href')
+    emit({'instruction': 'Click login button', 'status': 'done', 'result': 'Now at ' + current_url})
 
     emit({'final': True, 'ok': True, 'summary': 'Successfully logged in.'})
 except Exception as exc:

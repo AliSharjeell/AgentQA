@@ -250,7 +250,6 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
   const [showUrlHint, setShowUrlHint] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [creating, setCreating] = useState(false);
-  const [visionMode, setVisionMode] = useState(false);
 
   const handleCreateTask = useCallback(async () => {
     if (!inputName.trim() || !window.qaApi) return;
@@ -265,8 +264,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     try {
       const task = await window.qaApi.createTask({
         name: inputName.trim(),
-        targetUrl: browserUrl,
-        visionMode
+        targetUrl: browserUrl
       });
       setTasks((prev) => [task, ...prev]);
       onSelectTask(task.id);
@@ -333,18 +331,6 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
         {urlError && (
           <p className="text-[10px] text-red-400 px-2">{urlError}</p>
         )}
-        <div className="flex items-center gap-2 px-2 pb-1">
-          <input
-            type="checkbox"
-            id="visionMode"
-            checked={visionMode}
-            onChange={(e) => setVisionMode(e.target.checked)}
-            className="rounded border-white/10 bg-white/5 accent-zinc-500 cursor-pointer"
-          />
-          <label htmlFor="visionMode" className="text-[10px] text-zinc-400 select-none cursor-pointer hover:text-zinc-300 transition-colors">
-            Enable Vision Mode (Multimodal LLM required)
-          </label>
-        </div>
       </div>
     </div>
   );
@@ -600,7 +586,7 @@ function ReportBadge({ report }: { report: QaReport }): JSX.Element {
 // ─── Settings Panel ─────────────────────────────────────────────────────────
 
 function SettingsPanel(): JSX.Element {
-  const [settings, setSettings] = useState({ apiProvider: "anthropic", apiKey: "", apiBaseUrl: "", model: "Minimax-M2.7" });
+  const [settings, setSettings] = useState({ apiProvider: "anthropic", apiKey: "", apiBaseUrl: "", model: "Minimax-M2.7", visionMode: false });
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
@@ -667,6 +653,10 @@ function SettingsPanel(): JSX.Element {
         <div>
           <label className="mb-1.5 block text-xs text-zinc-400">Base URL (optional)</label>
           <input className="input w-full" placeholder="Leave empty for default" value={settings.apiBaseUrl} onChange={(e) => setSettings((s) => ({ ...s, apiBaseUrl: e.target.value }))} />
+        </div>
+        <div className="flex items-center gap-2 pt-2">
+          <input type="checkbox" id="settingsVisionMode" checked={settings.visionMode} onChange={(e) => setSettings((s) => ({ ...s, visionMode: e.target.checked }))} className="rounded border-white/10 bg-white/5 accent-zinc-500 cursor-pointer" />
+          <label htmlFor="settingsVisionMode" className="text-xs text-zinc-400 select-none cursor-pointer hover:text-zinc-300 transition-colors">Enable Vision Mode (Multimodal LLM required)</label>
         </div>
       </div>
 
