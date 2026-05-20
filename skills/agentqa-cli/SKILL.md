@@ -15,10 +15,17 @@ This skill allows you (the AI Agent) to run automated, headless QA tests on web 
 
 ## Prerequisites
 
-The CLI requires an API key for Anthropic or OpenAI to power its own reasoning engine. Ensure the following environment variables are available, or ask the user to provide them:
-- `QA_API_KEY` (Required)
-- `QA_API_PROVIDER` (Optional, defaults to `anthropic`)
-- `QA_API_MODEL` (Optional)
+1. **Verify & Install CLI**: 
+   Before running tests, verify if the `agentqa` command is available. If it is not installed, install it globally by executing:
+   ```bash
+   npm install -g @alisharjeel/agentqa
+   ```
+
+2. **API Credentials**:
+   The CLI requires an API key for Anthropic or OpenAI to power its own reasoning engine. Ensure the following environment variables are available, or ask the user to provide them:
+   - `QA_API_KEY` (Required)
+   - `QA_API_PROVIDER` (Optional, defaults to `anthropic`)
+   - `QA_API_MODEL` (Optional)
 
 ## How to use the CLI
 
