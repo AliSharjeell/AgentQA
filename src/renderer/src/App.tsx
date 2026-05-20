@@ -122,7 +122,7 @@ export default function App(): JSX.Element {
         <aside className="mica-sidebar sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden px-4 py-4">
           <div className="flex flex-col gap-3 pb-3 border-b border-white/5">
             <div className="window-drag flex items-center py-1.5">
-              <h1 className="text-sm font-normal text-white tracking-wide">QA Automation AI</h1>
+              <h1 className="text-sm font-normal text-white tracking-wide">AgentQA</h1>
             </div>
             <button
               className="inline-flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition duration-200 active:scale-[0.98] select-none"

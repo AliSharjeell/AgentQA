@@ -338,7 +338,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1100,
     minHeight: 720,
-    title: "QA Automation AI",
+    title: "AgentQA",
     autoHideMenuBar: true,
     titleBarStyle: "hidden",
     titleBarOverlay: {
