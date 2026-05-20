@@ -1,5 +1,5 @@
 {
-  "name": "agentqa",
+  "name": "@alisharjeel/agentqa",
   "version": "0.1.0",
   "description": "AI-powered QA automation desktop app with live browser preview, task management, and AI-driven test execution using browser-use",
   "main": "out/main/index.js",
@@ -7,6 +7,9 @@
     "agentqa": "./out/cli/index.js"
   },
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",

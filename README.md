@@ -43,7 +43,7 @@ Opens an Electron window with a sidebar for tasks and a live browser preview. Co
 
 ```bash
 # Install globally
-npm install -g .
+npm install -g @alisharjeel/agentqa
 
 # Setup credentials
 agentqa config

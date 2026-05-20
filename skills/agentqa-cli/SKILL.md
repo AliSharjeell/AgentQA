@@ -26,7 +26,7 @@ The CLI is registered globally as `agentqa` after a global installation. If runn
 
 ```bash
 # Global install (recommended)
-npm install -g .
+npm install -g @alisharjeel/agentqa
 
 # Or run from source
 npm run build:cli

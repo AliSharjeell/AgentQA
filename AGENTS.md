@@ -72,9 +72,9 @@ src/
 If you are an AI coding agent operating in a terminal, you can use the global `agentqa` CLI to verify your own code changes!
 
 ### Installation
-Install the CLI globally from the project root:
+Install the CLI globally:
 ```bash
-npm install -g .
+npm install -g @alisharjeel/agentqa
 ```
 
 ### Usage
