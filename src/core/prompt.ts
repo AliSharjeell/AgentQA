@@ -70,8 +70,8 @@ CRITICAL RULES:
      pos = js("(() => { const e = document.querySelector('#btn'); if(!e) return null; const r = e.getBoundingClientRect(); return {x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2)}; })()")
      if pos: click_at_xy(int(pos['x']), int(pos['y']))
 
-3. For select/dropdown elements, use js() to set the value:
-     js("document.querySelector('select#country').value = 'US'; document.querySelector('select#country').dispatchEvent(new Event('change', {bubbles:true}))")
+3. For select/dropdown elements, first call wait_for_element(selector) to ensure it is present, then use js() to set the value and dispatch change event:
+     js("const el = document.querySelector('select#country'); if (el) { el.value = 'US'; el.dispatchEvent(new Event('change', {bubbles:true})); }")
 
 4. Always import json and time at the top. Use time.sleep(0.5) between actions.
 
@@ -91,7 +91,10 @@ CRITICAL RULES:
 
 12. CSS Selectors: ONLY use standard CSS selectors for querySelector(). NEVER use non-standard selectors like :contains() or :has-text(). To find elements by text, use standard JS like: Array.from(document.querySelectorAll('a, button')).find(e => e.textContent.toLowerCase().includes('log out') || e.textContent.toLowerCase().includes('logout'))
 
-13. JS Dialogs (Alert/Confirm/Prompt): Browser dialogs will freeze the page. Before clicking any element that triggers a dialog, you MUST mock the dialog functions via js(). Example: js('window.alert = () => {}; window.confirm = () => true; window.prompt = () => "test";')
+13. JS Dialogs (Alert/Confirm/Prompt): Browser dialogs will freeze the page and block test execution. Before clicking any element that triggers a dialog, you MUST mock the dialog functions via js() to capture the message or return custom values. To verify messages or set prompt values, mock them like this:
+    js("window.alert = (msg) => { window.lastAlertMsg = msg; }; window.confirm = (msg) => { window.lastConfirmMsg = msg; return false; }; window.prompt = (msg) => { window.lastPromptMsg = msg; return 'QA Agent Test'; };")
+    Then perform the click, and verify by checking the captured properties:
+    alert_msg = js("window.lastAlertMsg")
 
 14. URL and Navigation Checks: If verifying a URL redirect or page load, you MUST use a loop with time.sleep() to wait for page_info()['url'] or DOM elements to update before failing. Redirects can take a few seconds.
 
@@ -107,6 +110,8 @@ CRITICAL RULES:
 
 18. Viewport & Scrolling: click_at_xy(x, y) clicks at viewport (screen) coordinates, so the target element MUST be visible and inside the viewport to be clicked successfully. If an element might be off-screen/below the fold (like the "Finish" button on checkout overview pages), you MUST call e.scrollIntoView() in your js() snippet before getting the bounding rect, or use scroll(x, y, dy) to scroll down first. Example of scrolling an element into view and getting its coordinates:
     pos = js("""(() => { const e = document.querySelector('#finish'); if(!e) return null; e.scrollIntoView({block: 'center'}); const r = e.getBoundingClientRect(); return {x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2)}; })()""")
+
+19. Python String Literals in emit(): For all strings in your Python code, especially inside emit() payloads (such as 'evidence', 'summary', 'confirmedBugs', etc.), you MUST NOT write literal multi-line strings using single or double quotes. If you need to include a newline, use the escaped version '\\n' (as two characters) or use triple-quotes ('''...''') if writing a multi-line string block. Raw newlines inside single- or double-quoted strings will cause a Python SyntaxError: unterminated string literal. Use json.dumps() if you are building complex data structures.
 
 Required output format:
 - Return ONLY valid Python code. No markdown fences, no comments before imports.
