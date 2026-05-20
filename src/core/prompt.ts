@@ -67,7 +67,11 @@ CRITICAL RULES:
 
 8. Before writing the final report, always call page_info() after the final action to get the accurate current URL for your report. Never infer the final URL from memory.
 
-9. Wrap everything in try/except that emits a final error event.
+9. To inspect or verify the DOM (like checking text or cart count), you MUST write JavaScript using js() and return the data to your Python script. Never hallucinate DOM state. Example: count = js("document.querySelector('.shopping_cart_badge')?.textContent").
+
+10. Never retry an entire scenario from the beginning if earlier actions (like login) succeeded. Continue from where you are.
+
+11. Wrap everything in try/except that emits a final error event.
 
 Required output format:
 - Return ONLY valid Python code. No markdown fences, no comments before imports.
@@ -97,13 +101,15 @@ Agent Instructions:
 - Use set_value() for ALL form fields.
 - Use click_at_xy() only for buttons/links. Always extract int x,y from js() result dict.
 - After submitting forms, wait_for_load() + time.sleep(1) + verify with page_info().
-- Never report a bug unless verified twice after waiting and scrolling.
+- Never report a bug unless verified twice after waiting and scrolling. For dynamic loading, use loops and time.sleep() to wait. Do not mark slow loading as a bug if it eventually loads.
 - A scenario can complete successfully but still be FAIL if confirmed bugs are found.
+- If a bug requires visual comparison or screenshot interpretation (e.g. broken product images, repeated placeholder images, visual layout issues, image mismatch bugs), do NOT mark it as FAIL. Instead, add to your report warnings: "WARNING: Visual check skipped because current model is text-only."
+- You should only verify evidence available through: page URL, DOM text, form values, button text, cart item names, validation messages, page headings, and console/network errors.
 - Best result logic:
   * PASS = test objective completed and no confirmed bugs. PASS is only allowed if all required checks are verified with DOM/page evidence.
-  * FAIL = confirmed website/app bug found. If either a confirmed bug exists (e.g. product images are broken, or selected cart items do not match the clicked products), report as CONFIRMED BUG and the final RESULT must be FAIL.
-  * INFRA_FAILED = browser/tool/navigation/timeout failure. If URL becomes chrome-error://chromewebdata, report as INFRA_FAILED.
-- If no bugs are found after thorough testing, the report result should be PASS. Do NOT invent or speculate about issues that were not actually observed. Do NOT report expected error messages (like invalid login prompts) as bugs if the test is a negative scenario.
+  * FAIL = confirmed website/app bug found. If a confirmed bug exists (e.g. selected cart items do not match the clicked products, validation message is missing), report as CONFIRMED BUG and the final RESULT must be FAIL.
+  * INFRA_FAILED = browser/tool/navigation/timeout failure. If URL becomes chrome-error://chromewebdata or a timeout occurs, report as INFRA_FAILED, not a website bug.
+- If no bugs are found after thorough testing, write "No confirmed bugs found." in the summary and the report result should be PASS. Do NOT invent or speculate about issues that were not actually observed. Do NOT report expected validation errors (like invalid login prompts) as bugs.
 - Wrap everything in try/except.
 
 Complete example — login flow:
