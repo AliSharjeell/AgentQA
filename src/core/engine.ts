@@ -53,6 +53,13 @@ interface AgentResponse {
   report?: CliReport | null;
 }
 
+interface StepBudgetDecision {
+  needsMoreSteps: boolean;
+  requestedSteps: number;
+  reason: string;
+  confidence: number;
+}
+
 function emptyObservation(targetUrl: string): PageObservation {
   return {
     taskUrl: targetUrl,
@@ -130,6 +137,20 @@ function parseAgentResponse(raw: string): AgentResponse {
     activePhase,
     faults: Array.isArray(parsed.faults) ? parsed.faults : [],
     report: parsed.report || null
+  };
+}
+
+function parseStepBudgetDecision(raw: string): StepBudgetDecision {
+  const json = extractJsonObject(raw);
+  const parsed = JSON.parse(json) as Partial<StepBudgetDecision> & {
+    needs_more_steps?: boolean;
+    requested_steps?: number;
+  };
+  return {
+    needsMoreSteps: Boolean(parsed.needsMoreSteps ?? parsed.needs_more_steps),
+    requestedSteps: Number(parsed.requestedSteps ?? parsed.requested_steps ?? 0),
+    reason: parsed.reason || 'No reason provided.',
+    confidence: Number(parsed.confidence ?? 0)
   };
 }
 
@@ -364,6 +385,49 @@ function decideExecutorSwitch(input: {
   return { approved: true, target: input.target, message: `Executor switch approved: ${input.current} -> ${input.target}.` };
 }
 
+function buildStepBudgetPrompt(input: {
+  taskName: string;
+  currentUrl: string;
+  history: AgentHistoryEntry[];
+  plan: AgentPlanStep[];
+  lastActionResult: string | null;
+  maxSteps: number;
+  observation: PageObservation;
+}): string {
+  return `You are AgentQA's step-budget controller. The run is at its max step limit.
+Return strict JSON only. Decide whether a small step extension is justified.
+
+Original task:
+${input.taskName}
+
+Current URL: ${input.currentUrl}
+Current max steps: ${input.maxSteps}
+Last action result: ${input.lastActionResult || 'None'}
+
+Current plan:
+${input.plan.map((step) => `${step.step}. [${step.status}] ${step.description}`).join('\n') || 'No plan.'}
+
+Recent history:
+${input.history.slice(-10).map((entry) => `${entry.step}. ${entry.action}${entry.targetId ? ` ${entry.targetId}` : ''} -> ${entry.status}: ${entry.result}`).join('\n') || 'None'}
+
+Visible page text excerpt:
+${input.observation.pageText.slice(0, 1200) || 'No page text detected.'}
+
+Rules:
+- Say needs_more_steps true only if the task is clearly near completion and the next steps are specific.
+- Say false if the agent is looping, lost, missing required evidence, or just exploring.
+- requested_steps must be between 1 and 15.
+- confidence must be 0 to 1.
+
+Return:
+{
+  "needs_more_steps": true,
+  "requested_steps": 10,
+  "reason": "Specific reason tied to current DOM/history.",
+  "confidence": 0.85
+}`;
+}
+
 export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   const { targetUrl, prompt, settings, cdpUrl, timeoutMs = 120000 } = options;
   const mode: AgentRunMode = options.mode || 'standard';
@@ -426,7 +490,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   let parseFailures = 0;
   let scrollStreak = 0;
   let blockedScrollAttempts = 0;
-  const maxSteps = options.maxSteps && options.maxSteps > 0 ? options.maxSteps : 25;
+  let maxSteps = options.maxSteps && options.maxSteps > 0 ? options.maxSteps : 25;
+  let stepBudgetExtensionsUsed = 0;
   const numberedObjectiveCount = countNumberedObjectives(prompt);
   const executorStepHandler = (event: HarnessStepEvent): void => {
     onStep(event);
@@ -440,6 +505,47 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     onStep: executorStepHandler
   });
   await executor.startSession({ targetUrl, mode, cdpUrl, timeoutMs });
+
+  const maybeExtendStepBudget = async (stepNum: number): Promise<boolean> => {
+    if (stepNum < maxSteps || stepBudgetExtensionsUsed >= 1) return false;
+    addStep('Ask whether more steps are needed', 'running');
+    onStep({ instruction: 'Ask whether more steps are needed', status: 'running' });
+    try {
+      const decision = parseStepBudgetDecision(await callForScript(settings, buildStepBudgetPrompt({
+        taskName: prompt,
+        currentUrl,
+        history,
+        plan,
+        lastActionResult,
+        maxSteps,
+        observation
+      })));
+      const requested = Math.max(1, Math.min(15, Math.floor(decision.requestedSteps || 0)));
+      if (decision.needsMoreSteps && requested > 0 && decision.confidence >= 0.75) {
+        stepBudgetExtensionsUsed++;
+        maxSteps += requested;
+        const message = `Approved ${requested} more steps: ${decision.reason}`;
+        history.push({ step: stepNum, action: 'extend_step_budget', value: String(requested), status: 'success', result: message, url: currentUrl });
+        lastActionResult = message;
+        addStep('Ask whether more steps are needed', 'done', message);
+        onStep({ instruction: 'Ask whether more steps are needed', status: 'done', result: message });
+        return true;
+      }
+      const message = `Step extension denied: ${decision.reason} (confidence ${decision.confidence.toFixed(2)})`;
+      history.push({ step: stepNum, action: 'extend_step_budget', value: String(requested), status: 'blocked', result: message, url: currentUrl });
+      lastActionResult = message;
+      addStep('Ask whether more steps are needed', 'done', message);
+      onStep({ instruction: 'Ask whether more steps are needed', status: 'done', result: message });
+      return false;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      history.push({ step: stepNum, action: 'extend_step_budget', status: 'failed', result: message, url: currentUrl });
+      lastActionResult = `Step extension check failed: ${message}`;
+      addStep('Ask whether more steps are needed', 'failed', undefined, message);
+      onStep({ instruction: 'Ask whether more steps are needed', status: 'failed', error: message });
+      return false;
+    }
+  };
 
   addStep(`Open and inspect ${targetUrl}`, 'running');
   onStep({ instruction: `Open and inspect ${targetUrl}`, status: 'running' });
@@ -722,6 +828,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     } else {
       resetDirective = `The last action failed. Do not retry it blindly. Use the updated DOM, choose another tactic, or fail with evidence.`;
     }
+
+    await maybeExtendStepBudget(stepNum);
   }
 
   const report = makeReport({

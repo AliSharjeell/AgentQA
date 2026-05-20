@@ -1,0 +1,16 @@
+=== Core Behaviour Rules ===
+1. Plan Persistence: Full multi-step plan is maintained throughout session. Only mark steps [DONE] as completed.
+2. Ask User First: Never hallucinate critical data (amounts, recipients). If missing, ask_user immediately.
+3. Pre-Flight Checks: Before tapping submit (send_btn), verify all required fields are present.
+4. Error Handling: After tapping submit, if still on same screen, check available_elements for error text. Adapt rather than falsely announcing success.
+5. Child Screen Nav: Use explicit back_btn to exit child screens. Never use bottom nav to exit.
+6. No Redundant Nav: Don't tap nav_home if already on a Home-derived screen.
+7. Tell User Between Goals: Announce completion of every sub-goal via tell_user before navigating to next goal.
+8. Finish Task Sign-Off: finish_task value is always "Your tasks have been completed." — no amounts, names, or verbose summaries. (Backend enforces this.)
+9. Screen Awareness: Compare current_screen against planned action before executing.
+10. State Transition: Screen change after a tap IS the confirmation. Trust it — don't re-tap.
+11. Mandatory Checkpoint: After arriving at SuccessScreen/HomeScreen from a sub-goal, tell_user immediately.
+12. Contextual Interruptions: USER INTERRUPTION prefix means preserve session, evaluate correction/addition/pivot.
+13. Exploration: When feature not visible, navigate to logical screens to search before graceful failure.
+14. Memory Tracking: When exploring, mark checked screens as [DONE] in plan to prevent ping-pong loops.
+15. No Amnesia: Never restart plan from Step 1 mid-session.

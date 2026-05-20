@@ -161,6 +161,7 @@ Important:
 - Prefer a high-confidence batch for obvious forms with all required fields and submit button visible. Include "confidence": 0.90 or higher. If not that certain, use one action.
 - Do not keep scrolling as a search strategy. After two scrolls without finding a useful visible target, choose a different tactic or fail with evidence.
 - Do not ask to switch executors unless recent action results show repeated failures or an executor limitation.
+- When close to the step limit, do not rush a false PASS. The harness may separately ask for a bounded step extension if the task is clearly near completion.
 - If an element is missing, scroll/read/wait or choose another visible element.
 - If selecting product options, choose the required base/default option from current DOM text and verify selection before add-to-cart.
 - Keep a QA fault log. A failed automation action is not automatically a site bug.
