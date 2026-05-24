@@ -665,9 +665,9 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
 
   return (
     <div className="qa-report-panel space-y-3 select-text">
-      <div className="qa-report-header">
+      <div className="qa-report-header flex flex-col gap-2">
         <div className={`qa-status-badge ${statusTone(status)}`}>Verdict: {status}</div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0">
           <p className="text-[11px] font-medium text-zinc-100 break-words">{report.title || report.taskName}</p>
           <p className="text-[10px] text-zinc-500 break-all">{report.targetUrl}</p>
           <p className="mt-0.5 text-[9px] uppercase tracking-wide text-zinc-600">Run Completed: {report.endTime ? "Yes" : "No"}</p>
@@ -743,8 +743,10 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
                   <p className="min-w-0 break-words text-[10px] text-zinc-200">{assertion.description}</p>
                   <span className={`shrink-0 text-[9px] uppercase tracking-wide ${assertion.status === "PASS" ? "text-green-300" : assertion.status === "FAIL" ? "text-red-300" : "text-amber-300"}`}>{assertion.status}</span>
                 </div>
+                {assertion.selector ? <p className="mt-1 break-all text-[9px] text-zinc-600">Selector: {assertion.selector}</p> : null}
                 <p className="mt-1 break-all text-[9px] text-zinc-500">Expected: {String(assertion.expected ?? "")}</p>
                 <p className="break-all text-[9px] text-zinc-500">Actual: {String(assertion.actual ?? "")}</p>
+                {assertion.evidence?.length ? <p className="break-all text-[9px] text-zinc-600">Evidence: {assertion.evidence.join("; ")}</p> : null}
               </div>
             ))
           )}
