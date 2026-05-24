@@ -14,7 +14,7 @@ import { createAgentExecutor, isExecutorAvailable, type AgentExecutor } from './
 import { buildPrompt, normalizeScript, type AgentHistoryEntry, type AgentPlanStep } from './prompt';
 import { EvidenceCollector } from './evidence';
 import { createTestPlan } from './planner';
-import { buildQaRunResult, writeQaReportFiles } from './reporter';
+import { buildQaRunResult, applyValidatorGating, writeQaReportFiles } from './reporter';
 import { verifyAction, verifyPlanAssertions } from './verification';
 import { runValidatorAudit } from './validator';
 
@@ -75,6 +75,7 @@ function emptyObservation(targetUrl: string): PageObservation {
     page: { url: targetUrl, title: '' },
     availableElements: [],
     interactiveElements: [],
+    fieldRegistry: [],
     pageText: '',
     consoleErrors: [],
     networkErrors: []
@@ -90,6 +91,7 @@ function parseObservation(raw: string, targetUrl: string): PageObservation {
       page: parsed.page || { url: targetUrl, title: '' },
       availableElements: elements,
       interactiveElements: elements,
+      fieldRegistry: parsed.fieldRegistry || [],
       pageText: parsed.pageText || '',
       consoleErrors: parsed.consoleErrors || [],
       networkErrors: parsed.networkErrors || []
@@ -555,7 +557,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       plan: testPlan,
       observation: finalObservation,
       llmReport: legacyReport,
-      evidence: [...evidence, ...(legacyReport.evidence || [])]
+      evidence: [...evidence, ...(legacyReport.evidence || [])],
+      actions: qaActions
     });
     actionTracePath = evidenceCollector.saveActionTrace(qaActions);
     const artifacts = evidenceCollector.manifest({
@@ -585,7 +588,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     try {
       addStep('Running Validator LLM audit', 'running');
       onStep({ instruction: 'Running Validator LLM audit', status: 'running' });
-      finalReport.validator_review = await runValidatorAudit({ settings, result: finalReport, observations });
+      const validatorReview = await runValidatorAudit({ settings, result: finalReport, observations });
+      applyValidatorGating(finalReport, validatorReview);
       addStep('Running Validator LLM audit', 'done', 'Validator review completed');
       onStep({ instruction: 'Running Validator LLM audit', status: 'done', result: 'Validator review completed' });
     } catch (err: any) {

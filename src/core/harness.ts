@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import type { FieldRegistry, FieldRegistryEntry } from '../shared/types';
 
 const execAsync = promisify(exec);
 
@@ -88,6 +89,7 @@ export interface PageObservation {
   };
   availableElements: ObservedElement[];
   interactiveElements: ObservedElement[];
+  fieldRegistry?: FieldRegistry;
   pageText: string;
   consoleErrors: string[];
   networkErrors: string[];
@@ -809,6 +811,7 @@ function buildDomSnapshotPython(): string {
 
       const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[contenteditable],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="combobox"],[role="listbox"],[role="option"],[role="menu"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="textbox"],[role="searchbox"],[aria-haspopup],[aria-expanded],[tabindex],label'));
       const elements = [];
+      const registry = [];
       let idx = 0;
       for (const el of nodes) {
         const rect = el.getBoundingClientRect();
@@ -841,15 +844,59 @@ function buildDomSnapshotPython(): string {
           selected: Boolean(el.selected || el.getAttribute('aria-selected') === 'true'),
           expanded: el.getAttribute('aria-expanded') === 'true' ? true : el.getAttribute('aria-expanded') === 'false' ? false : undefined
         });
+
+        const tag = el.tagName.toLowerCase();
+        const isField = ['input', 'select', 'textarea'].includes(tag) || el.isContentEditable || (el.getAttribute('role') || '').includes('box');
+        if (isField) {
+          let labelSource = 'id';
+          if (el.getAttribute('aria-label')) labelSource = 'aria-label';
+          else if (el.getAttribute('aria-labelledby')) labelSource = 'aria-labelledby';
+          else if (el.id && document.querySelector('label[for="' + cssEscape(el.id) + '"]')) labelSource = 'label-for';
+          else if (el.closest('label')) labelSource = 'label-for';
+          else if (el.getAttribute('placeholder')) labelSource = 'placeholder';
+          else if (visualLabel(el)) labelSource = 'visual-proximity';
+          else if (el.getAttribute('name')) labelSource = 'name';
+
+          const opts = optionsFor(el);
+          let selectedValue, selectedLabel;
+          if (opts) {
+            const selectedOpt = opts.find(o => o.selected);
+            if (selectedOpt) {
+              selectedValue = selectedOpt.value;
+              selectedLabel = selectedOpt.label;
+            }
+          }
+
+          registry.push({
+            field_id: String(elements.length - 1),
+            label: description.slice(0, 160),
+            selector: selectorFor(el),
+            tag,
+            type: typeFor(el),
+            name: el.getAttribute('name') || '',
+            html_id: el.id || '',
+            initial_value: String(value || ''),
+            label_source: labelSource,
+            confidence: 1.0,
+            bbox: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
+            nearby_text: [],
+            options: opts,
+            selected_value: selectedValue,
+            selected_label: selectedLabel
+          });
+        }
+
         if (elements.length >= 140) break;
       }
       return {
         availableElements: elements,
+        fieldRegistry: registry,
         pageText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 4500),
         consoleErrors: (window.__agentqaConsoleErrors || []).slice(-12)
       };
     })()""")
     elements = snapshot.get("availableElements", []) if isinstance(snapshot, dict) else []
+    field_registry = snapshot.get("fieldRegistry", []) if isinstance(snapshot, dict) else []
     page_text = snapshot.get("pageText", "") if isinstance(snapshot, dict) else ""
     console_errors = snapshot.get("consoleErrors", []) if isinstance(snapshot, dict) else []
     network_errors = []
@@ -881,6 +928,7 @@ function buildDomSnapshotPython(): string {
         "page": info,
         "availableElements": elements,
         "interactiveElements": elements,
+        "fieldRegistry": field_registry,
         "pageText": page_text,
         "consoleErrors": console_errors,
         "networkErrors": network_errors[-50:]

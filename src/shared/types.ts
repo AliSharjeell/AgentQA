@@ -76,7 +76,7 @@ export type AgentActionName =
 
 export type AgentActionStatus = "success" | "failed" | "skipped" | "needs_user" | "blocked";
 
-export type QaVerdict = "PASS" | "FAIL" | "BLOCKED" | "WARNING" | "SKIPPED";
+export type QaVerdict = "PASS" | "PASS_WITH_WARNINGS" | "FAIL" | "BLOCKED" | "WARNING" | "SKIPPED";
 
 export type QaRootCause =
   | "WEBSITE_BUG"
@@ -85,7 +85,8 @@ export type QaRootCause =
   | "VERIFICATION_MAPPING_ERROR"
   | "TEST_DATA_ISSUE"
   | "ENVIRONMENT_ISSUE"
-  | "AMBIGUOUS";
+  | "AMBIGUOUS"
+  | "REPORT_INCONSISTENCY";
 
 export type QaSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
@@ -101,6 +102,29 @@ export type AgentActionErrorCode =
   | "EXECUTOR_UNAVAILABLE"
   | "SWITCH_DENIED"
   | "UNKNOWN";
+
+export interface FieldRegistryEntry {
+  field_id: string;
+  label: string;
+  selector: string;
+  tag: string;
+  type: string;
+  name: string;
+  html_id: string;
+  initial_value: string;
+  planned_value?: string;
+  actual_value?: string;
+  label_source: 'label-for' | 'aria-label' | 'aria-labelledby' | 'placeholder' | 'visual-proximity' | 'name' | 'id';
+  confidence: number;
+  bbox: { x: number; y: number; width: number; height: number };
+  nearby_text: string[];
+  // For <select> elements
+  options?: Array<{ value: string; label: string; selected: boolean }>;
+  selected_value?: string;
+  selected_label?: string;
+}
+
+export type FieldRegistry = FieldRegistryEntry[];
 
 export interface AgentBoundingBox {
   x: number;
@@ -159,9 +183,15 @@ export interface AgentActionResult {
   executor: AgentExecutorKind;
 }
 
+export interface QaSelectActual {
+  value: string;
+  label: string;
+}
+
 export interface QaVerificationResult {
   expected: string | number | boolean | null;
   actual: string | number | boolean | null;
+  actual_select?: QaSelectActual;
   status: QaVerdict;
   rootCause?: QaRootCause;
   message?: string;
@@ -202,10 +232,19 @@ export interface QaAcceptanceCriterion {
   assertionIds?: string[];
 }
 
+export type QaIssueCategory =
+  | 'PRODUCT_ISSUE'
+  | 'AGENT_ISSUE'
+  | 'VERIFIER_ISSUE'
+  | 'TEST_DATA_ISSUE'
+  | 'ENVIRONMENT_ISSUE'
+  | 'REPORT_ISSUE';
+
 export interface QaIssue {
   id: string;
   title: string;
   type: QaRootCause;
+  category?: QaIssueCategory;
   severity: QaSeverity;
   status: QaVerdict;
   expected: string;
@@ -342,6 +381,8 @@ export interface QaValidatorResult {
   suggested_report_patches: QaValidatorPatch[];
   final_recommendation: "SHOW" | "REGENERATE_REPORT" | "RERUN_TEST" | "NEED_HUMAN_REVIEW";
 }
+
+export type ValidatorReview = QaValidatorResult;
 
 // ─── API Config ─────────────────────────────────────────────────────────────
 

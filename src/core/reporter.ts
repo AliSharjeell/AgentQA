@@ -9,7 +9,10 @@ import type {
   QaRunStats,
   QaSeverity,
   QaVerdict,
-  TaskStepStatus
+  TaskStepStatus,
+  QaValidatorResult,
+  QaValidatorPatch,
+  QaIssueCategory
 } from '../shared/types';
 import type { CliReport, PageObservation } from './harness';
 import type { QaTestPlan } from './planner';
@@ -73,6 +76,91 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
       raw_data: input.llmReport || undefined
     }
   });
+}
+
+export function applyValidatorGating(result: QaRunResult, validatorResult: QaValidatorResult): QaRunResult {
+  result.validator_review = validatorResult;
+
+  if (validatorResult.verdict === 'VALID_REPORT') {
+    return result;
+  }
+
+  if (validatorResult.verdict === 'REPORT_NEEDS_FIX') {
+    result.status = 'BLOCKED';
+    result.root_cause = 'REPORT_INCONSISTENCY';
+    result.issues.forEach(issue => {
+      if (issue.type === 'WEBSITE_BUG') {
+        issue.type = 'REPORT_INCONSISTENCY';
+        issue.category = 'REPORT_ISSUE';
+        issue.status = 'BLOCKED';
+      }
+    });
+    result.summary = "Run completed, but the QA report needs correction. No website bug is proven.";
+  } else if (validatorResult.verdict === 'UNTRUSTWORTHY_REPORT') {
+    result.status = 'BLOCKED';
+    result.root_cause = 'REPORT_INCONSISTENCY';
+    result.issues.forEach(issue => {
+      if (issue.type === 'WEBSITE_BUG') {
+        issue.type = 'REPORT_INCONSISTENCY';
+        issue.category = 'REPORT_ISSUE';
+        issue.status = 'BLOCKED';
+      }
+    });
+    result.summary = "The browser run completed, but the generated QA verdict is not trustworthy.";
+  }
+
+  if (validatorResult.suggested_report_patches) {
+    for (const patch of validatorResult.suggested_report_patches) {
+      applySafePatch(result, patch);
+    }
+  }
+
+  return result;
+}
+
+function applySafePatch(result: QaRunResult, patch: QaValidatorPatch) {
+  const match = patch.path.match(/^issues\[(\d+)\]\.([a-zA-Z_]+)$/);
+  if (match) {
+    const idx = parseInt(match[1], 10);
+    const field = match[2];
+    const issue = result.issues[idx];
+    if (issue) {
+      if (field === 'type' && issue.type === 'WEBSITE_BUG' && patch.new_value !== 'WEBSITE_BUG') {
+        issue.type = patch.new_value as QaRootCause;
+        issue.category = categoryForRootCause(issue.type);
+      } else if (field === 'status' && issue.status === 'FAIL' && patch.new_value === 'BLOCKED') {
+        issue.status = 'BLOCKED';
+      }
+    }
+  }
+
+  const matchAssert = patch.path.match(/^assertions\[(\d+)\]\.([a-zA-Z_]+)$/);
+  if (matchAssert) {
+    const idx = parseInt(matchAssert[1], 10);
+    const field = matchAssert[2];
+    const assertion = result.assertions[idx];
+    if (assertion) {
+      if (field === 'rootCause' && assertion.rootCause === 'WEBSITE_BUG' && patch.new_value !== 'WEBSITE_BUG') {
+        assertion.rootCause = patch.new_value as QaRootCause;
+      } else if (field === 'status' && assertion.status === 'FAIL' && patch.new_value === 'BLOCKED') {
+        assertion.status = 'BLOCKED';
+      }
+    }
+  }
+}
+
+export function categoryForRootCause(rootCause: QaRootCause | undefined): QaIssueCategory {
+  switch (rootCause) {
+    case 'WEBSITE_BUG': return 'PRODUCT_ISSUE';
+    case 'AGENT_LIMITATION':
+    case 'AGENT_INTERNAL_ERROR': return 'AGENT_ISSUE';
+    case 'VERIFICATION_MAPPING_ERROR': return 'VERIFIER_ISSUE';
+    case 'TEST_DATA_ISSUE': return 'TEST_DATA_ISSUE';
+    case 'ENVIRONMENT_ISSUE': return 'ENVIRONMENT_ISSUE';
+    case 'REPORT_INCONSISTENCY': return 'REPORT_ISSUE';
+    case 'AMBIGUOUS':
+    default: return 'REPORT_ISSUE';
+  }
 }
 
 export function writeQaReportFiles(collector: EvidenceCollector, result: QaRunResult): void {
@@ -272,17 +360,30 @@ export function renderHtmlReport(result: QaRunResult): string {
 </html>`;
 }
 
-function buildStats(actions: QaRunAction[], assertions: QaAssertionResult[], observations: PageObservation[]): QaRunStats {
+export interface ExtendedQaRunStats extends QaRunStats {
+  critical_network_errors?: number;
+}
+
+function isCriticalNetworkError(err: string): boolean {
+  const nonCriticalPatterns = [/analytics/i, /fonts?/i, /favicon/i, /ads?/i, /tracker/i];
+  return !nonCriticalPatterns.some(p => p.test(err));
+}
+
+function buildStats(actions: QaRunAction[], assertions: QaAssertionResult[], observations: PageObservation[]): ExtendedQaRunStats {
+  const allNetworkErrors = observations.reduce((count, observation) => count + (observation.networkErrors?.length || 0), 0);
+  const criticalNetworkErrors = observations.reduce((count, observation) => count + (observation.networkErrors?.filter(isCriticalNetworkError).length || 0), 0);
+  
   return {
     actions_total: actions.length,
     actions_successful: actions.filter((action) => action.action_result === 'SUCCESS').length,
     actions_failed: actions.filter((action) => action.action_result === 'FAILED' || action.action_result === 'BLOCKED').length,
     assertions_total: assertions.length,
-    assertions_passed: assertions.filter((assertion) => assertion.status === 'PASS').length,
+    assertions_passed: assertions.filter((assertion) => assertion.status === 'PASS' || assertion.status === 'PASS_WITH_WARNINGS').length,
     assertions_failed: assertions.filter((assertion) => assertion.status === 'FAIL').length,
     assertions_blocked: assertions.filter((assertion) => assertion.status === 'BLOCKED').length,
     console_errors: observations.reduce((count, observation) => count + (observation.consoleErrors?.length || 0), 0),
-    network_errors: observations.reduce((count, observation) => count + (observation.networkErrors?.length || 0), 0)
+    network_errors: allNetworkErrors,
+    critical_network_errors: criticalNetworkErrors
   };
 }
 
@@ -311,15 +412,16 @@ function decideVerdict(
   assertions: QaAssertionResult[],
   actions: QaRunAction[],
   evidenceWarnings: EvidenceWarning[],
-  stats: QaRunStats
+  stats: ExtendedQaRunStats
 ): { status: QaVerdict; rootCause: QaRootCause; severity: QaSeverity } {
-  const failedAssertion = assertions.find((assertion) => assertion.required !== false && assertion.status === 'FAIL');
-  if (failedAssertion) {
-    return {
-      status: failedAssertion.rootCause === 'WEBSITE_BUG' ? 'FAIL' : 'BLOCKED',
-      rootCause: failedAssertion.rootCause || 'AMBIGUOUS',
-      severity: 'HIGH'
-    };
+  const failedBug = assertions.find((a) => a.required !== false && a.status === 'FAIL' && a.rootCause === 'WEBSITE_BUG');
+  if (failedBug) {
+    return { status: 'FAIL', rootCause: 'WEBSITE_BUG', severity: 'HIGH' };
+  }
+
+  const failedAgent = assertions.find(a => a.required !== false && a.status === 'FAIL' && (a.rootCause === 'AGENT_INTERNAL_ERROR' || a.rootCause === 'VERIFICATION_MAPPING_ERROR' || a.rootCause === 'TEST_DATA_ISSUE' || a.rootCause === 'ENVIRONMENT_ISSUE' || a.rootCause === 'AGENT_LIMITATION'));
+  if (failedAgent) {
+    return { status: 'BLOCKED', rootCause: failedAgent.rootCause || 'AGENT_INTERNAL_ERROR', severity: 'HIGH' };
   }
 
   const blockedAssertion = assertions.find((assertion) => assertion.required !== false && assertion.status === 'BLOCKED');
@@ -330,28 +432,51 @@ function decideVerdict(
 
   if (llmReport?.result === 'INFRA_FAILED') return { status: 'BLOCKED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
 
-  if (assertions.some((assertion) => assertion.status === 'WARNING') || evidenceWarnings.length || stats.console_errors > 0 || stats.network_errors > 0) {
-    return { status: 'WARNING', rootCause: stats.network_errors > 0 ? 'ENVIRONMENT_ISSUE' : 'AMBIGUOUS', severity: 'MEDIUM' };
+  const hasWarnings = assertions.some((assertion) => assertion.status === 'WARNING') || evidenceWarnings.length || stats.console_errors > 0 || stats.network_errors > 0;
+  const criticalNetworkErrors = stats.critical_network_errors ?? 0;
+  
+  if (criticalNetworkErrors > 0) {
+    return { status: 'BLOCKED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
   }
 
-  return { status: 'PASS', rootCause: 'AMBIGUOUS', severity: 'INFO' };
+  const allReqPassed = assertions.filter(a => a.required !== false).every(a => a.status === 'PASS' || a.status === 'PASS_WITH_WARNINGS' || a.status === 'WARNING');
+  if (allReqPassed && assertions.length > 0) {
+    if (hasWarnings) {
+      return { status: 'WARNING', rootCause: stats.network_errors > 0 ? 'ENVIRONMENT_ISSUE' : 'AMBIGUOUS', severity: 'MEDIUM' };
+    }
+    return { status: 'PASS', rootCause: 'AMBIGUOUS', severity: 'INFO' };
+  }
+
+  return { status: 'BLOCKED', rootCause: 'AMBIGUOUS', severity: 'MEDIUM' };
 }
 
 function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], evidenceWarnings: EvidenceWarning[], artifacts: QaRunResult['artifacts']): QaIssue[] {
   const issues: QaIssue[] = [];
+  const allScreenshots = [...new Set(actions.map((action) => action.screenshot).filter((item): item is string => Boolean(item)))];
+  if (artifacts.screenshots_dir) {
+    // Add any full-page screenshots if needed, but for now rely on action screenshots
+  }
+
   for (const assertion of assertions) {
     if (!['FAIL', 'BLOCKED', 'WARNING'].includes(assertion.status)) continue;
+    const type = assertion.rootCause || (assertion.status === 'FAIL' ? 'WEBSITE_BUG' : 'AMBIGUOUS');
+    
+    // Add any screenshots specifically tied to this assertion
+    const assertionScreenshots = (assertion.evidence || []).filter(e => e.endsWith('.png') || e.endsWith('.jpg') || e.endsWith('.jpeg'));
+    const issueScreenshots = [...new Set([...allScreenshots, ...assertionScreenshots])];
+
     issues.push({
       id: `ISSUE-${String(issues.length + 1).padStart(3, '0')}`,
       title: assertion.message || assertion.description,
-      type: assertion.rootCause || (assertion.status === 'FAIL' ? 'WEBSITE_BUG' : 'AMBIGUOUS'),
+      type,
+      category: categoryForRootCause(type),
       severity: assertion.status === 'WARNING' ? 'MEDIUM' : 'HIGH',
       status: assertion.status,
       expected: String(assertion.expected ?? 'Expected state verified'),
       actual: String(assertion.actual ?? assertion.message ?? 'Not verified'),
       affected_elements: [],
       evidence: {
-        screenshots: assertion.evidence ? assertion.evidence.filter(e => e.endsWith('.png')) : [],
+        screenshots: issueScreenshots,
         dom_snapshot: artifacts.dom_after,
         action_trace: artifacts.action_trace
       },
@@ -361,17 +486,19 @@ function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], ev
 
   for (const action of actions) {
     if (action.action_result !== 'BLOCKED' && action.verification?.status !== 'BLOCKED') continue;
+    const type = action.verification?.rootCause || 'AGENT_LIMITATION';
     issues.push({
       id: `ISSUE-${String(issues.length + 1).padStart(3, '0')}`,
       title: `${action.action} could not be verified`,
-      type: action.verification?.rootCause || 'AGENT_LIMITATION',
+      type,
+      category: categoryForRootCause(type),
       severity: 'HIGH',
       status: 'BLOCKED',
       expected: String(action.verification?.expected ?? 'Action should be supported and verifiable'),
       actual: String(action.verification?.actual ?? action.action_result),
       affected_elements: action.target ? [action.target] : [],
       evidence: {
-        screenshots: action.screenshot ? [action.screenshot] : [],
+        screenshots: allScreenshots,
         dom_snapshot: artifacts.dom_before,
         action_trace: artifacts.action_trace
       },
@@ -384,6 +511,7 @@ function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], ev
       id: `ISSUE-${String(issues.length + 1).padStart(3, '0')}`,
       title: 'Evidence capture warning',
       type: 'AMBIGUOUS',
+      category: 'REPORT_ISSUE',
       severity: 'MEDIUM',
       status: 'WARNING',
       expected: 'Evidence artifact captured',
@@ -400,12 +528,16 @@ function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], ev
 function buildSummary(
   status: QaVerdict,
   llmReport: CliReport | null | undefined,
-  stats: QaRunStats,
+  stats: ExtendedQaRunStats,
   assertions: QaAssertionResult[],
   evidenceWarnings: EvidenceWarning[]
 ): string {
-  if (status === 'PASS') {
-    return `Every required assertion was verified. ${stats.assertions_passed}/${stats.assertions_total} assertions passed with evidence.`;
+  if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') {
+    let msg = `Every required assertion was verified. ${stats.assertions_passed}/${stats.assertions_total} assertions passed with evidence.`;
+    if (status === 'PASS_WITH_WARNINGS') {
+      msg += ` However, ${evidenceWarnings.length + stats.console_errors + stats.network_errors} warning signal(s) were captured.`;
+    }
+    return msg;
   }
   if (status === 'WARNING') {
     return `The main objective was verified, but ${evidenceWarnings.length + stats.console_errors + stats.network_errors} warning signal(s) were captured.`;
@@ -427,6 +559,8 @@ function buildReproSteps(actions: QaRunAction[], llmReport: CliReport | null | u
           const input = sub.input !== null && sub.input !== undefined ? ` = ${String(sub.input)}` : '';
           steps.push(`${sub.action}${target}${input}`);
         }
+      } else if (action.action === 'batch') {
+        steps.push(`batch (details unavailable)`);
       } else {
         const target = action.target ? ` ${action.target}` : '';
         const input = action.input !== null && action.input !== undefined ? ` = ${String(action.input)}` : '';
@@ -452,6 +586,7 @@ function aggregateStatuses(statuses: QaVerdict[]): QaVerdict {
   if (statuses.includes('BLOCKED')) return 'BLOCKED';
   if (statuses.includes('WARNING')) return 'WARNING';
   if (statuses.length > 0 && statuses.every((status) => status === 'PASS')) return 'PASS';
+  if (statuses.length > 0 && statuses.every((status) => status === 'PASS' || status === 'PASS_WITH_WARNINGS' || status === 'WARNING')) return 'PASS_WITH_WARNINGS';
   return 'SKIPPED';
 }
 

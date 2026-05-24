@@ -25,7 +25,7 @@ QA Run Result (JSON):
 ${JSON.stringify(result, null, 2)}
 
 Observations (Network/Console Errors):
-${JSON.stringify(observations.map(o => ({ url: o.url, console: o.consoleErrors, network: o.networkErrors })), null, 2)}
+${JSON.stringify(observations.map(o => ({ url: o.taskUrl, console: o.consoleErrors, network: o.networkErrors })), null, 2)}
 
 ==================================================
 AUDIT RULES
@@ -42,39 +42,68 @@ OUTPUT SCHEMA (Strict JSON)
 {
   "verdict": "VALID_REPORT" | "REPORT_NEEDS_FIX" | "UNTRUSTWORTHY_REPORT",
   "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "can_show_to_user": true | false,
   "summary": "A 1-2 sentence summary of the audit.",
   "critical_findings": [
     {
-      "severity": "CRITICAL" | "WARNING",
+      "type": "FIELD_MAPPING_ERROR" | "VERDICT_CONFLICT" | "WRONG_ROOT_CAUSE" | "EXPECTED_VALUE_MISMATCH" | "EVIDENCE_MISSING" | "ASSERTION_LOGIC_ERROR" | "REPORT_QUALITY_ISSUE",
+      "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO",
       "message": "Description of the logical flaw or missing evidence.",
-      "affected_issue_id": "ISSUE-001" (optional)
+      "affected_report_paths": ["issues[0].status", "assertions[1].rootCause"],
+      "recommended_fix": "Description of how to fix this issue in the report"
     }
   ],
-  "final_recommendation": "What should the human QA engineer do?"
+  "suggested_report_patches": [
+    {
+      "path": "issues[0].type",
+      "old_value": "WEBSITE_BUG",
+      "new_value": "VERIFICATION_MAPPING_ERROR",
+      "reason": "Explain why this change is correct"
+    }
+  ],
+  "final_recommendation": "SHOW" | "REGENERATE_REPORT" | "RERUN_TEST" | "NEED_HUMAN_REVIEW"
 }
 `;
 
   try {
-    const response = await callForScript(settings, prompt);
-    const jsonStart = response.indexOf('{');
-    const jsonEnd = response.lastIndexOf('}');
-    const json = jsonStart !== -1 && jsonEnd !== -1 ? response.slice(jsonStart, jsonEnd + 1) : response;
+    const responseText = await callForScript(settings, prompt);
+    let json = responseText;
+    const start = responseText.indexOf('{');
+    if (start !== -1) {
+      let braces = 0;
+      let end = start;
+      for (let i = start; i < responseText.length; i++) {
+        if (responseText[i] === '{') braces++;
+        if (responseText[i] === '}') braces--;
+        if (braces === 0) {
+          end = i;
+          break;
+        }
+      }
+      if (end > start) {
+        json = responseText.substring(start, end + 1);
+      }
+    }
     
     const parsed = JSON.parse(json);
     return {
       verdict: parsed.verdict || 'UNTRUSTWORTHY_REPORT',
       confidence: parsed.confidence || 'LOW',
+      can_show_to_user: parsed.can_show_to_user ?? false,
       summary: parsed.summary || 'Failed to generate a valid summary.',
       critical_findings: parsed.critical_findings || [],
-      final_recommendation: parsed.final_recommendation || 'Manual review required due to invalid validator output.'
+      suggested_report_patches: parsed.suggested_report_patches || [],
+      final_recommendation: parsed.final_recommendation || 'NEED_HUMAN_REVIEW'
     };
   } catch (err: any) {
     return {
       verdict: 'UNTRUSTWORTHY_REPORT',
       confidence: 'LOW',
+      can_show_to_user: false,
       summary: `Validator LLM failed to process the audit: ${err.message}`,
       critical_findings: [],
-      final_recommendation: 'Skip validator feedback and rely on manual review.'
+      suggested_report_patches: [],
+      final_recommendation: 'NEED_HUMAN_REVIEW'
     };
   }
 }
