@@ -1405,6 +1405,7 @@ ${indentPython(buildDomSnapshotPython(), '    ')}
 export function buildVerificationScript(registry: import('../shared/types').FieldRegistry): string {
   return `
 import json
+import traceback
 
 def emit(payload):
     print("BH_EVENT " + json.dumps(payload), flush=True)
@@ -1413,10 +1414,7 @@ try:
     results = {}
     registry = json.loads(${JSON.stringify(JSON.stringify(registry))})
 
-    script = """(() => {
-      const results = {};
-      const registry = arguments[0];
-      
+    script = "(() => {\\n  const results = {};\\n  const registry = " + json.dumps(registry) + ";\\n" + """
       for (const field of registry) {
         let el = null;
         for (const sel of field.selector_candidates || [field.selector]) {
@@ -1454,12 +1452,12 @@ try:
       return results;
     })()"""
 
-    # We need to escape the script properly to pass to js()
-    results = js(script, registry)
+    results = js(script)
     emit({"instruction": "Verify field values", "status": "done", "result": "Verified " + str(len(registry)) + " fields."})
     emit({"final": True, "ok": True, "summary": json.dumps(results)})
+
 except Exception as exc:
     emit({"instruction": "Verify field values", "status": "failed", "error": str(exc)})
-    emit({"final": True, "ok": False, "summary": "Verification capture failed.", "error": str(exc)})
+    emit({"final": True, "ok": False, "summary": "JavaScript verification failed.", "error": str(exc)})
 `;
 }

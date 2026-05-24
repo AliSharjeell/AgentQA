@@ -86,7 +86,8 @@ export type QaRootCause =
   | "TEST_DATA_ISSUE"
   | "ENVIRONMENT_ISSUE"
   | "AMBIGUOUS"
-  | "REPORT_INCONSISTENCY";
+  | "REPORT_INCONSISTENCY"
+  | "VERIFIER_RUNTIME_ERROR";
 
 export type QaSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
@@ -317,7 +318,7 @@ export interface QaRunResult {
   title: string;
   target_url: string;
   status: QaVerdict;
-  root_cause: QaRootCause;
+  root_cause?: QaRootCause;
   severity: QaSeverity;
   summary: string;
   environment: QaEnvironment;

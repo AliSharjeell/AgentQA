@@ -256,7 +256,7 @@ function actionRequiresTarget(action: StructuredAction): boolean {
   ].includes(action.action);
 }
 
-function resolveExecutableAction(action: StructuredAction, observation: PageObservation, settings?: import('./settings').AppSettings): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
+function resolveExecutableAction(action: StructuredAction, observation: PageObservation, settings?: import('../shared/types').AppSettings): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
   if (action.action !== 'batch') {
     const target = targetForId(action.targetId, observation);
     if (action.targetId && !target) {
@@ -554,16 +554,21 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     domAfterPath = evidenceCollector.saveDomSnapshot('dom-after.json', finalObservation);
     consoleLogPath = evidenceCollector.saveConsoleLog(observations);
     networkLogPath = evidenceCollector.saveNetworkLog(observations);
+    let verifierRuntimeError: Error | null = null;
     if (executor && finalObservation.fieldRegistry) {
-      const fieldResults = await executor.verifyFields(finalObservation.fieldRegistry);
-      for (const entry of finalObservation.fieldRegistry) {
-        const fr = fieldResults[entry.field_id];
-        if (fr && fr.found) {
-          entry.value = fr.value;
-          entry.checked = fr.checked;
-          entry.selected_value = fr.selected_value;
-          entry.selected_label = fr.selected_label;
+      try {
+        const fieldResults = await executor.verifyFields(finalObservation.fieldRegistry);
+        for (const entry of finalObservation.fieldRegistry) {
+          const fr = fieldResults[entry.field_id];
+          if (fr && fr.found) {
+            entry.value = fr.value;
+            entry.checked = fr.checked;
+            entry.selected_value = fr.selected_value;
+            entry.selected_label = fr.selected_label;
+          }
         }
+      } catch (err: any) {
+        verifierRuntimeError = err;
       }
     }
 
@@ -599,17 +604,37 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       artifacts
     });
 
-    try {
-      addStep('Running Validator LLM audit', 'running');
-      onStep({ instruction: 'Running Validator LLM audit', status: 'running' });
+    if (verifierRuntimeError) {
+      finalReport.status = "BLOCKED";
+      finalReport.root_cause = "VERIFIER_RUNTIME_ERROR";
+      finalReport.issues.push({
+        id: "VERIFIER_ERROR",
+        title: "Verifier Runtime Error",
+        type: "VERIFIER_RUNTIME_ERROR",
+        severity: "CRITICAL",
+        status: "BLOCKED",
+        expected: "Successful verification",
+        actual: `Error: ${verifierRuntimeError.message}`,
+        affected_elements: [],
+        evidence: { screenshots: [] },
+        recommendation: "Check if the JS verification script has syntax errors.",
+        reproSteps: ["Run deterministic verifier script"]
+      });
+    }
+
+    if (!verifierRuntimeError) {
+      try {
+        addStep('Running Validator LLM audit', 'running');
+        onStep({ instruction: 'Running Validator LLM audit', status: 'running' });
       const validatorReview = await runValidatorAudit({ settings, result: finalReport, observations });
       applyValidatorGating(finalReport, validatorReview);
       addStep('Running Validator LLM audit', 'done', 'Validator review completed');
       onStep({ instruction: 'Running Validator LLM audit', status: 'done', result: 'Validator review completed' });
-    } catch (err: any) {
-      addStep('Running Validator LLM audit', 'failed', undefined, err.message);
-      onStep({ instruction: 'Running Validator LLM audit', status: 'failed', error: err.message });
-      console.error("Validator LLM failed", err);
+      } catch (err: any) {
+        addStep('Running Validator LLM audit', 'failed', undefined, err.message);
+        onStep({ instruction: 'Running Validator LLM audit', status: 'failed', error: err.message });
+        console.error("Validator LLM failed", err);
+      }
     }
 
     writeQaReportFiles(evidenceCollector, finalReport);

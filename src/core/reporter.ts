@@ -572,7 +572,7 @@ function buildReproSteps(actions: QaRunAction[], llmReport: CliReport | null | u
   return llmReport?.stepsExecuted?.length ? llmReport.stepsExecuted : ['Open the target URL.', 'Run the requested QA scenario.', 'Verify the final DOM/UI state.'];
 }
 
-function recommendationFor(rootCause: QaRootCause, status: QaVerdict): string {
+function recommendationFor(rootCause: QaRootCause | undefined, status: QaVerdict): string {
   if (status === 'PASS') return 'No action required.';
   if (rootCause === 'WEBSITE_BUG') return 'Fix the application behavior that contradicted the expected verified state, then rerun the QA test.';
   if (rootCause === 'AGENT_LIMITATION') return 'Improve automation support or selector strategy, then rerun. Do not treat the blocked run as a website bug.';

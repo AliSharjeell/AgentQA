@@ -185,11 +185,11 @@ class BrowserHarnessExecutor implements AgentExecutor {
   async verifyFields(registry: FieldRegistry): Promise<Record<string, any>> {
     const config = this.requireConfig();
     const result = await runHarnessScript(buildVerificationScript(registry), this.onStep, config.cdpUrl, config.timeoutMs);
-    if (!result.ok) return {};
+    if (!result.ok) throw new Error(result.error || result.summary || 'JavaScript verification failed');
     try {
       return JSON.parse(result.summary);
-    } catch {
-      return {};
+    } catch (e: any) {
+      throw new Error(`Failed to parse verification result: ${e.message}`);
     }
   }
 
