@@ -152,14 +152,6 @@ export function resolveInitialObservationReadiness(
     };
   }
 
-  if (fieldCount === 0 && intent.requiresFieldsAtStart) {
-    return {
-      status: 'blocked',
-      rootCause: 'NO_FIELDS_FOUND',
-      summary: 'The task is form-focused, but no editable controls were discovered on the current page.'
-    };
-  }
-
   return {
     status: 'continue',
     summary: fieldCount === 0
@@ -190,7 +182,7 @@ export function extractGoalKeywords(task: string): string[] {
   const normalized = normalize(task);
   const afterIntent = normalized
     .replace(/\b(go to|navigate to|open|visit|search for|find|look for|add|verify|check|confirm|ensure|fill|change|set)\b/g, ' ')
-    .replace(/\b(page|form|field|fields|input|inputs|button|link|menu|cart|bag|basket|product|item|result|results)\b/g, ' ');
+    .replace(/\b(page|form|field|fields|input|inputs|button|link|menu)\b/g, ' ');
   const tokens = afterIntent
     .split(' ')
     .map((token) => token.trim())
@@ -298,87 +290,28 @@ export function detectGoalCompletion(input: {
     };
   }
 
-  if (intent === 'NAVIGATION') {
-    const passed = hasKeywordEvidence && (reportClaimsPass(input.llmReport) || textContainsAny(`${url} ${title}`, keywords) || actions.some((action) => ['click', 'navigate'].includes(action.action)));
+  if (input.llmReport && input.llmReport.result !== 'PASS') {
     return {
-      passed,
-      status: passed ? 'PASS' : 'BLOCKED',
-      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
-      expected: keywords.length ? `Navigation state includes ${keywords.join(', ')}` : 'Requested navigation state reached',
-      actual: passed ? true : `${url} ${title}`.trim() || null,
+      passed: false,
+      status: input.llmReport.result === 'FAIL' ? 'FAIL' : 'BLOCKED',
+      rootCause: 'GOAL_NOT_REACHED',
+      expected: 'Task completed successfully',
+      actual: `LLM reported ${input.llmReport.result}`,
       evidence: baseEvidence,
-      message: passed ? undefined : 'The final URL/title/page text did not prove the requested navigation target was reached.'
+      message: 'The agent determined it could not successfully complete or verify the task.'
     };
   }
 
-  if (intent === 'SEARCH_OR_DISCOVERY') {
-    const query = extractSearchQuery(input.task);
-    const resultWords = ['result', 'results', 'showing', 'found', 'search'];
-    const passed = textContainsAny(combinedState, query) &&
-      (textContainsAny(combinedState, resultWords) || actions.some((action) => ['fill', 'type', 'press_key', 'click', 'navigate'].includes(action.action)) || reportClaimsPass(input.llmReport));
-    return {
-      passed,
-      status: passed ? 'PASS' : 'BLOCKED',
-      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
-      expected: query.length ? `Search/discovery state includes ${query.join(', ')}` : 'Search/discovery result visible',
-      actual: passed ? true : pageText.slice(0, 300) || null,
-      evidence: baseEvidence,
-      message: passed ? undefined : 'The final state did not prove search or discovery results for the requested topic.'
-    };
-  }
+  const reportPassed = reportClaimsPass(input.llmReport);
+  const generalPassed = reportPassed && hasKeywordEvidence;
 
-  if (intent === 'TRANSACTION_OR_CART') {
-    const cartTerms = ['cart', 'bag', 'basket', 'added', 'subtotal', 'quantity', 'item'];
-    const itemTerms = keywords.filter((term) => !['cart', 'bag', 'basket', 'add', 'added'].includes(term));
-    const hasCartEvidence = textContainsAny(combinedState, cartTerms) || textContainsAny(actionText, cartTerms);
-    const itemMatches = itemTerms.length === 0 || textContainsAny(combinedState, itemTerms) || textContainsAny(actionText, itemTerms);
-    const passed = hasCartEvidence && itemMatches && (actions.length > 0 || reportClaimsPass(input.llmReport));
-    return {
-      passed,
-      status: passed ? 'PASS' : 'BLOCKED',
-      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
-      expected: 'Requested item/action reflected in cart, bag, or transaction state',
-      actual: passed ? true : pageText.slice(0, 300) || null,
-      evidence: baseEvidence,
-      message: passed ? undefined : 'The final state did not prove the requested cart/transaction outcome.'
-    };
-  }
-
-  if (intent === 'SETTINGS_CHANGE') {
-    const changed = actions.some((action) => ['click', 'check', 'uncheck', 'select', 'fill', 'type'].includes(action.action));
-    const passed = changed && (hasKeywordEvidence || reportClaimsPass(input.llmReport));
-    return {
-      passed,
-      status: passed ? 'PASS' : 'BLOCKED',
-      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
-      expected: 'Requested setting state changed and remains visible',
-      actual: passed ? true : pageText.slice(0, 300) || null,
-      evidence: baseEvidence,
-      message: passed ? undefined : 'The final state did not prove the requested setting changed.'
-    };
-  }
-
-  if (intent === 'CONTENT_VERIFICATION') {
-    const passed = hasKeywordEvidence && (pageText.length > 0 || reportClaimsPass(input.llmReport));
-    return {
-      passed,
-      status: passed ? 'PASS' : 'BLOCKED',
-      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
-      expected: keywords.length ? `Visible content includes ${keywords.join(', ')}` : 'Requested content visible',
-      actual: passed ? true : pageText.slice(0, 300) || null,
-      evidence: baseEvidence,
-      message: passed ? undefined : 'The final DOM/page text did not prove the requested content is visible.'
-    };
-  }
-
-  const passed = reportClaimsPass(input.llmReport) && hasKeywordEvidence && (actions.length > 0 || pageText.length > 0);
   return {
-    passed,
-    status: passed ? 'PASS' : 'BLOCKED',
-    rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
-    expected: 'Requested objective verified by DOM/page evidence',
-    actual: passed ? true : pageText.slice(0, 300) || null,
+    passed: generalPassed,
+    status: generalPassed ? 'PASS' : 'BLOCKED',
+    rootCause: generalPassed ? undefined : 'GOAL_NOT_REACHED',
+    expected: keywords.length ? `State containing: ${keywords.join(', ')}` : 'Task completed',
+    actual: generalPassed ? true : (reportPassed ? 'Keywords not found in final state' : 'Agent did not provide passing evidence'),
     evidence: baseEvidence,
-    message: passed ? undefined : 'The final state did not deterministically prove the requested objective.'
+    message: generalPassed ? undefined : 'The final state did not deterministically prove the requested objective.'
   };
 }

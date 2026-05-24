@@ -19,6 +19,7 @@ export interface AgentHistoryEntry {
   status: 'success' | 'failed' | 'blocked' | 'read';
   result: string;
   url: string;
+  thought?: string;
 }
 
 export interface PromptInput {
@@ -95,11 +96,11 @@ function summarizeElements(observation: PageObservation): string {
 
 function summarizeHistory(history: AgentHistoryEntry[]): string {
   return history
-    .slice(-15)
     .map((entry) => {
       const target = entry.targetId ? ` ${entry.targetId}` : '';
       const value = entry.value ? ` value="${entry.value.slice(0, 80)}"` : '';
-      return `${entry.step}. ${entry.action}${target}${value} -> ${entry.status}: ${entry.result}`;
+      const thoughtStr = entry.thought ? `\n   Reasoning: ${entry.thought}` : '';
+      return `${entry.step}. ${entry.action}${target}${value} -> ${entry.status}: ${entry.result}${thoughtStr}`;
     })
     .join('\n') || 'None';
 }
