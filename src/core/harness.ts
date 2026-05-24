@@ -2061,8 +2061,20 @@ def execute_one(item):
     selector = active_target.get("selector") or ""
     post_action = None
     if kind == "click":
-        click_target()
-        result = "Clicked " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
+        if "coordinates" in item:
+            coords = item.get("coordinates")
+            if isinstance(coords, list) and len(coords) >= 2:
+                vw = float(js("window.innerWidth") or 1000)
+                vh = float(js("window.innerHeight") or 800)
+                x = int(float(coords[0]) * vw)
+                y = int(float(coords[1]) * vh)
+                click_coordinate_action(x, y)
+                result = "Clicked coordinates [" + str(coords[0]) + ", " + str(coords[1]) + "]"
+            else:
+                raise Exception("click action has invalid coordinates: " + str(coords))
+        else:
+            click_target()
+            result = "Clicked " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
     elif kind == "click_coordinate":
         coords = str(item.get("targetId") or "").split(",")
         if len(coords) >= 2:
