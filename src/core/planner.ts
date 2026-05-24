@@ -12,7 +12,13 @@ export type QaAssertionKind =
   | 'visible'
   | 'no_horizontal_overflow'
   | 'accessibility_basic'
-  | 'objective_verified';
+  | 'objective_verified'
+  | 'equals'
+  | 'contains'
+  | 'not_default'
+  | 'valid_future_year'
+  | 'not_empty'
+  | 'changed';
 
 export interface QaAssertionSpec {
   id: string;
@@ -286,7 +292,7 @@ function textValue(
   return {
     id,
     description,
-    kind: 'value_equals',
+    kind: 'equals',
     expected,
     selectorHints,
     textHints,
@@ -306,7 +312,7 @@ function selectedEquals(
   return {
     id,
     description,
-    kind: 'selected_equals',
+    kind: 'equals',
     expected,
     selectorHints,
     textHints,
@@ -325,7 +331,7 @@ function selectedNotDefault(
   return {
     id,
     description,
-    kind: 'selected_not_default',
+    kind: 'not_default',
     expected: 'non-default selection',
     selectorHints,
     textHints,

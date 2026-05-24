@@ -35,7 +35,7 @@ export interface BuildRunResultInput {
 export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
   const stats = buildStats(input.actions, input.assertions, input.observations);
   const acceptanceCriteria = buildAcceptanceCriteria(input.plan, input.assertions, stats);
-  const issues = buildIssues(input.actions, input.assertions, input.evidenceWarnings);
+  const issues = buildIssues(input.actions, input.assertions, input.evidenceWarnings, input.artifacts);
   const verdict = decideVerdict(input.llmReport, input.assertions, input.actions, input.evidenceWarnings, stats);
   const summary = buildSummary(verdict.status, input.llmReport, stats, input.assertions, input.evidenceWarnings);
 
@@ -66,7 +66,12 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
     started_at: input.startedAt,
     ended_at: input.endedAt,
     duration_ms: input.durationMs,
-    raw_report: input.llmReport || undefined
+    raw_agent_report: {
+      trusted: false,
+      status: input.llmReport?.result,
+      reason: 'Raw agent output before verification',
+      raw_data: input.llmReport || undefined
+    }
   });
 }
 
@@ -119,8 +124,8 @@ export function toDesktopReport(input: {
     reproducibleSteps: input.result.reproducible_steps,
     recommendation: input.result.recommendation,
     resultJson: input.result,
-    aiReasoning: typeof input.result.raw_report === 'object' && input.result.raw_report
-      ? JSON.stringify(input.result.raw_report, null, 2)
+    aiReasoning: input.result.raw_agent_report?.raw_data
+      ? JSON.stringify(input.result.raw_agent_report.raw_data, null, 2)
       : ''
   };
 }
@@ -195,6 +200,18 @@ export function renderHtmlReport(result: QaRunResult): string {
     </article>
   `).join('');
 
+  const validatorSection = result.validator_review ? `
+    <section>
+      <h2>Validator Review</h2>
+      <div class="issue">
+        <div><strong>Verdict: ${escapeHtml(result.validator_review.verdict)}</strong><span>Confidence: ${result.validator_review.confidence}</span></div>
+        <p>${escapeHtml(result.validator_review.summary)}</p>
+        <p><b>Recommendation:</b> ${escapeHtml(result.validator_review.final_recommendation)}</p>
+        ${result.validator_review.critical_findings.map(f => `<p><b>Finding [${escapeHtml(f.severity)}]:</b> ${escapeHtml(f.message)}</p>`).join('')}
+      </div>
+    </section>
+  ` : '';
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -205,7 +222,7 @@ export function renderHtmlReport(result: QaRunResult): string {
     body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", sans-serif; }
     main { max-width: 1180px; margin: 0 auto; padding: 32px; }
     header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 24px; }
-    .badge { display: inline-block; border: 1px solid var(--line); background: var(--panel); padding: 8px 12px; font-weight: 700; color: var(--accent); }
+    .badge { display: inline-block; border: 1px solid var(--line); background: var(--panel); padding: 8px 12px; font-weight: 700; color: var(--accent); margin-right: 8px; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
     .metric, .issue, figure { border: 1px solid var(--line); background: var(--panel); padding: 14px; }
     .metric span, figcaption, .issue span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
@@ -220,10 +237,12 @@ export function renderHtmlReport(result: QaRunResult): string {
   <main>
     <header>
       <div class="badge">${escapeHtml(result.status)}</div>
+      ${result.validator_review ? `<div class="badge">Validator: ${result.validator_review.verdict === 'VALID_REPORT' ? 'Passed' : result.validator_review.verdict === 'REPORT_NEEDS_FIX' ? 'Report needs fix' : 'Untrustworthy report'}</div>` : ''}
       <h1>${escapeHtml(result.title)}</h1>
       <p>${escapeHtml(result.summary)}</p>
       <p>${escapeHtml(result.target_url)}</p>
     </header>
+    ${validatorSection}
     <div class="grid">
       <div class="metric">${result.stats.assertions_passed}<span>Assertions Passed</span></div>
       <div class="metric">${result.stats.assertions_failed}<span>Assertions Failed</span></div>
@@ -294,11 +313,6 @@ function decideVerdict(
   evidenceWarnings: EvidenceWarning[],
   stats: QaRunStats
 ): { status: QaVerdict; rootCause: QaRootCause; severity: QaSeverity } {
-  if (llmReport?.result === 'INFRA_FAILED') return { status: 'BLOCKED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
-
-  const blockedAction = actions.find((action) => action.action_result === 'BLOCKED' || action.verification?.status === 'BLOCKED');
-  if (blockedAction) return { status: 'BLOCKED', rootCause: blockedAction.verification?.rootCause || 'AGENT_LIMITATION', severity: 'HIGH' };
-
   const failedAssertion = assertions.find((assertion) => assertion.required !== false && assertion.status === 'FAIL');
   if (failedAssertion) {
     return {
@@ -311,8 +325,10 @@ function decideVerdict(
   const blockedAssertion = assertions.find((assertion) => assertion.required !== false && assertion.status === 'BLOCKED');
   if (blockedAssertion) return { status: 'BLOCKED', rootCause: blockedAssertion.rootCause || 'AMBIGUOUS', severity: 'HIGH' };
 
-  if (llmReport?.result === 'FAIL') return { status: 'FAIL', rootCause: 'WEBSITE_BUG', severity: 'HIGH' };
-  if (llmReport?.result === 'AGENT_FAILED' || llmReport?.result === 'FAIL_AGENT_QA') return { status: 'BLOCKED', rootCause: 'AGENT_LIMITATION', severity: 'HIGH' };
+  const blockedAction = actions.find((action) => action.action_result === 'BLOCKED' || action.verification?.status === 'BLOCKED');
+  if (blockedAction) return { status: 'BLOCKED', rootCause: blockedAction.verification?.rootCause || 'AGENT_LIMITATION', severity: 'HIGH' };
+
+  if (llmReport?.result === 'INFRA_FAILED') return { status: 'BLOCKED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
 
   if (assertions.some((assertion) => assertion.status === 'WARNING') || evidenceWarnings.length || stats.console_errors > 0 || stats.network_errors > 0) {
     return { status: 'WARNING', rootCause: stats.network_errors > 0 ? 'ENVIRONMENT_ISSUE' : 'AMBIGUOUS', severity: 'MEDIUM' };
@@ -321,7 +337,7 @@ function decideVerdict(
   return { status: 'PASS', rootCause: 'AMBIGUOUS', severity: 'INFO' };
 }
 
-function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], evidenceWarnings: EvidenceWarning[]): QaIssue[] {
+function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], evidenceWarnings: EvidenceWarning[], artifacts: QaRunResult['artifacts']): QaIssue[] {
   const issues: QaIssue[] = [];
   for (const assertion of assertions) {
     if (!['FAIL', 'BLOCKED', 'WARNING'].includes(assertion.status)) continue;
@@ -335,9 +351,9 @@ function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], ev
       actual: String(assertion.actual ?? assertion.message ?? 'Not verified'),
       affected_elements: [],
       evidence: {
-        screenshots: [],
-        dom_snapshot: undefined,
-        action_trace: 'action-trace.json'
+        screenshots: assertion.evidence ? assertion.evidence.filter(e => e.endsWith('.png')) : [],
+        dom_snapshot: artifacts.dom_after,
+        action_trace: artifacts.action_trace
       },
       recommendation: recommendationFor(assertion.rootCause || 'AMBIGUOUS', assertion.status)
     });
@@ -356,7 +372,8 @@ function buildIssues(actions: QaRunAction[], assertions: QaAssertionResult[], ev
       affected_elements: action.target ? [action.target] : [],
       evidence: {
         screenshots: action.screenshot ? [action.screenshot] : [],
-        action_trace: 'action-trace.json'
+        dom_snapshot: artifacts.dom_before,
+        action_trace: artifacts.action_trace
       },
       recommendation: recommendationFor(action.verification?.rootCause || 'AGENT_LIMITATION', 'BLOCKED')
     });
@@ -402,11 +419,21 @@ function buildSummary(
 
 function buildReproSteps(actions: QaRunAction[], llmReport: CliReport | null | undefined): string[] {
   if (actions.length) {
-    return actions.map((action) => {
-      const target = action.target ? ` ${action.target}` : '';
-      const input = action.input !== null && action.input !== undefined ? ` = ${String(action.input)}` : '';
-      return `${action.action}${target}${input}`;
-    });
+    const steps: string[] = [];
+    for (const action of actions) {
+      if (action.sub_actions && action.sub_actions.length > 0) {
+        for (const sub of action.sub_actions) {
+          const target = sub.target ? ` ${sub.target}` : '';
+          const input = sub.input !== null && sub.input !== undefined ? ` = ${String(sub.input)}` : '';
+          steps.push(`${sub.action}${target}${input}`);
+        }
+      } else {
+        const target = action.target ? ` ${action.target}` : '';
+        const input = action.input !== null && action.input !== undefined ? ` = ${String(action.input)}` : '';
+        steps.push(`${action.action}${target}${input}`);
+      }
+    }
+    return steps;
   }
   return llmReport?.stepsExecuted?.length ? llmReport.stepsExecuted : ['Open the target URL.', 'Run the requested QA scenario.', 'Verify the final DOM/UI state.'];
 }

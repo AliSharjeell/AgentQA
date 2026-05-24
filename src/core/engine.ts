@@ -16,6 +16,7 @@ import { EvidenceCollector } from './evidence';
 import { createTestPlan } from './planner';
 import { buildQaRunResult, writeQaReportFiles } from './reporter';
 import { verifyAction, verifyPlanAssertions } from './verification';
+import { runValidatorAudit } from './validator';
 
 export interface TaskStep {
   instruction: string;
@@ -580,6 +581,19 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       evidenceWarnings: evidenceCollector.getWarnings(),
       artifacts
     });
+
+    try {
+      addStep('Running Validator LLM audit', 'running');
+      onStep({ instruction: 'Running Validator LLM audit', status: 'running' });
+      finalReport.validator_review = await runValidatorAudit({ settings, result: finalReport, observations });
+      addStep('Running Validator LLM audit', 'done', 'Validator review completed');
+      onStep({ instruction: 'Running Validator LLM audit', status: 'done', result: 'Validator review completed' });
+    } catch (err: any) {
+      addStep('Running Validator LLM audit', 'failed', undefined, err.message);
+      onStep({ instruction: 'Running Validator LLM audit', status: 'failed', error: err.message });
+      console.error("Validator LLM failed", err);
+    }
+
     writeQaReportFiles(evidenceCollector, finalReport);
     for (const step of steps) {
       if (step.status === 'running') step.status = resultToOk(finalReport) ? 'done' : 'failed';

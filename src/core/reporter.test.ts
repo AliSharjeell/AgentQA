@@ -89,7 +89,8 @@ function build(overrides: {
       markdown_report: 'report.md',
       json_result: 'result.json',
       screenshots_dir: 'screenshots/',
-      action_trace: 'action-trace.json'
+      action_trace: 'action-trace.json',
+      dom_after: 'dom-after.json'
     }
   });
 }
@@ -133,7 +134,7 @@ describe('QA verdict reporting', () => {
         status: 'FAIL',
         expected: 'Visa',
         actual: 'Default',
-        rootCause: 'WEBSITE_BUG'
+        rootCause: 'AGENT_LIMITATION'
       }]
     });
     expect(result.status).toBe('BLOCKED');
@@ -166,5 +167,104 @@ describe('QA verdict reporting', () => {
     });
     expect(result.status).toBe('WARNING');
     expect(result.evidence_status).toBe('PARTIAL');
+  });
+
+  // Bug Fix 1: The final normalized report says BLOCKED, but raw _report.result says PASS.
+  it('does not return BLOCKED if raw report is PASS and assertions passed', () => {
+    const result = build();
+    expect(result.status).toBe('PASS');
+  });
+
+  // Bug Fix 2 & 3: Field mapping errors should be BLOCKED, not FAIL/WEBSITE_BUG.
+  it('returns BLOCKED for VERIFICATION_MAPPING_ERROR', () => {
+    const result = build({
+      assertions: [{
+        ...passAssertion(),
+        status: 'FAIL',
+        expected: 'John',
+        actual: 'Mr.',
+        rootCause: 'VERIFICATION_MAPPING_ERROR'
+      }]
+    });
+    expect(result.status).toBe('BLOCKED');
+    expect(result.root_cause).toBe('VERIFICATION_MAPPING_ERROR');
+  });
+
+  // Bug Fix 4: Last Name could not be found but form was filled.
+  it('returns BLOCKED for AGENT_LIMITATION on failed assertion', () => {
+    const result = build({
+      assertions: [{
+        ...passAssertion(),
+        status: 'FAIL',
+        expected: 'Doe',
+        actual: 'Could not be found',
+        rootCause: 'AGENT_LIMITATION'
+      }]
+    });
+    expect(result.status).toBe('BLOCKED');
+    expect(result.root_cause).toBe('AGENT_LIMITATION');
+  });
+
+  // Bug Fix 7: Issue evidence screenshots are empty even though screenshots exist.
+  it('attaches screenshots and artifacts to issues properly', () => {
+    const result = build({
+      assertions: [{
+        ...passAssertion(),
+        status: 'FAIL',
+        expected: 'Visa',
+        actual: 'Default',
+        rootCause: 'WEBSITE_BUG',
+        evidence: ['screenshots/error1.png', 'text data'] // should filter for .png
+      }]
+    });
+    expect(result.issues[0].evidence.screenshots).toContain('screenshots/error1.png');
+    expect(result.issues[0].evidence.screenshots).not.toContain('text data');
+    expect(result.issues[0].evidence.dom_snapshot).toBe('dom-after.json');
+    expect(result.issues[0].evidence.action_trace).toBe('action-trace.json');
+  });
+
+  // Bug Fix 8: Reproduction steps are truncated batch actions.
+  it('expands batch actions into individual reproduction steps', () => {
+    const result = build({
+      actions: [{
+        ...passAction(),
+        action: 'batch',
+        sub_actions: [
+          { ...passAction(), action: 'type', target: '#name', input: 'Jane' },
+          { ...passAction(), action: 'click', target: '#submit', input: undefined }
+        ]
+      }]
+    });
+    expect(result.reproducible_steps).toEqual(['type #name = Jane', 'click #submit']);
+  });
+
+  // Bug Fix 9: Network errors cause WARNING, not BLOCKED/FAIL.
+  it('returns WARNING for network errors when everything else passes', () => {
+    const obsWithNetworkError = { ...observation, networkErrors: ['Failed to fetch analytics.js'] };
+    const result = buildQaRunResult({
+      runId: 'qa-run-unit',
+      plan: basePlan,
+      targetUrl: 'https://example.test',
+      startedAt: '2026-05-24T00:00:00.000Z',
+      endedAt: '2026-05-24T00:00:01.000Z',
+      durationMs: 1000,
+      actions: [passAction()],
+      assertions: [passAssertion()],
+      observations: [obsWithNetworkError],
+      llmReport: null,
+      evidence: [],
+      evidenceWarnings: [],
+      artifacts: { html_report: '', markdown_report: '', json_result: '', screenshots_dir: '' }
+    });
+    expect(result.status).toBe('WARNING');
+    expect(result.root_cause).toBe('ENVIRONMENT_ISSUE');
+  });
+
+  // Bug Fix 10: AI reasoning tab says [object Object]
+  it('includes raw_agent_report with raw_data object', () => {
+    const result = build();
+    expect(result.raw_agent_report).toBeDefined();
+    expect(result.raw_agent_report?.trusted).toBe(false);
+    expect(result.raw_agent_report?.raw_data).toEqual(expect.objectContaining({ result: 'PASS' }));
   });
 });

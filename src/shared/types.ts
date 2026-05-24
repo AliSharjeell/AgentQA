@@ -81,6 +81,8 @@ export type QaVerdict = "PASS" | "FAIL" | "BLOCKED" | "WARNING" | "SKIPPED";
 export type QaRootCause =
   | "WEBSITE_BUG"
   | "AGENT_LIMITATION"
+  | "AGENT_INTERNAL_ERROR"
+  | "VERIFICATION_MAPPING_ERROR"
   | "TEST_DATA_ISSUE"
   | "ENVIRONMENT_ISSUE"
   | "AMBIGUOUS";
@@ -169,11 +171,16 @@ export interface QaRunAction {
   action_id: string;
   action: string;
   target?: string;
+  field_id?: string;
   input?: string | number | boolean | null;
+  initial_value?: string | number | boolean | null;
+  planned_value?: string | number | boolean | null;
+  actual_value?: string | number | boolean | null;
   action_result: "SUCCESS" | "FAILED" | "BLOCKED" | "SKIPPED";
   verification?: QaVerificationResult;
   screenshot?: string;
   timestamp: string;
+  sub_actions?: QaRunAction[];
 }
 
 export interface QaAssertionResult {
@@ -269,7 +276,13 @@ export interface QaRunResult {
   started_at: string;
   ended_at: string;
   duration_ms: number;
-  raw_report?: unknown;
+  raw_agent_report?: {
+    status?: string;
+    trusted: boolean;
+    reason?: string;
+    raw_data?: unknown;
+  };
+  validator_review?: QaValidatorResult;
 }
 
 export interface AgentPlanStep {
@@ -291,6 +304,43 @@ export interface ExecutorSwitchRequest {
   status: "approved" | "denied";
   message: string;
   timestamp: string;
+}
+
+// ─── Validator LLM ────────────────────────────────────────────────────────
+
+export type QaValidatorVerdict = "VALID_REPORT" | "REPORT_NEEDS_FIX" | "UNTRUSTWORTHY_REPORT";
+
+export interface QaValidatorPatch {
+  path: string;
+  old_value: string;
+  new_value: string;
+  reason: string;
+}
+
+export interface QaValidatorFinding {
+  id: string;
+  type:
+    | "FIELD_MAPPING_ERROR"
+    | "VERDICT_CONFLICT"
+    | "WRONG_ROOT_CAUSE"
+    | "EXPECTED_VALUE_MISMATCH"
+    | "EVIDENCE_MISSING"
+    | "ASSERTION_LOGIC_ERROR"
+    | "REPORT_QUALITY_ISSUE";
+  severity: QaSeverity;
+  message: string;
+  affected_report_paths: string[];
+  recommended_fix: string;
+}
+
+export interface QaValidatorResult {
+  verdict: QaValidatorVerdict;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  can_show_to_user: boolean;
+  summary: string;
+  critical_findings: QaValidatorFinding[];
+  suggested_report_patches: QaValidatorPatch[];
+  final_recommendation: "SHOW" | "REGENERATE_REPORT" | "RERUN_TEST" | "NEED_HUMAN_REVIEW";
 }
 
 // ─── API Config ─────────────────────────────────────────────────────────────

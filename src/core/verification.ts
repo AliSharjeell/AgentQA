@@ -19,13 +19,18 @@ export function verifyAction(input: {
   timestamp: string;
 }): QaRunAction {
   const actionResult = actionResultFor(input.outcome);
+  const verification = verificationForAction(input.action, input.target, input.outcome);
   return {
     action_id: input.actionId,
     action: input.action.action,
     target: targetLabel(input.target),
+    field_id: input.target?.id,
     input: redactValue(input.action.value ?? input.action.key ?? input.action.url ?? null, targetLabel(input.target)),
+    initial_value: input.target?.value,
+    planned_value: input.action.value,
+    actual_value: verification?.actual,
     action_result: actionResult,
-    verification: verificationForAction(input.action, input.target, input.outcome),
+    verification,
     screenshot: input.screenshot,
     timestamp: input.timestamp
   };
@@ -75,9 +80,27 @@ function verificationForAction(
   switch (action.action) {
     case 'type':
     case 'fill':
-      return verifyValue(action.value ?? '', actualTarget, 'AGENT_LIMITATION');
+      if (action.value && String(target?.value) === String(action.value)) {
+        return {
+          expected: 'New value different from initial',
+          actual: 'Tried to fill initial value: ' + action.value,
+          status: 'BLOCKED',
+          rootCause: 'TEST_DATA_ISSUE',
+          message: 'Planned value is identical to initial value. Cannot prove fillability.'
+        };
+      }
+      return verifyValue(action.value ?? '', actualTarget, 'AGENT_INTERNAL_ERROR');
     case 'select':
-      return verifySelected(action.value ?? '', actualTarget);
+      if (action.value && (String(target?.value) === String(action.value) || String(target?.text) === String(action.value))) {
+        return {
+          expected: 'New value different from initial',
+          actual: 'Tried to select initial value: ' + action.value,
+          status: 'BLOCKED',
+          rootCause: 'TEST_DATA_ISSUE',
+          message: 'Planned value is identical to initial value. Cannot prove fillability.'
+        };
+      }
+      return verifySelected(action.value ?? '', actualTarget, 'AGENT_INTERNAL_ERROR');
     case 'check':
     case 'radio':
       return verifyChecked(true, actualTarget);
@@ -117,11 +140,22 @@ function verifyPlanAssertion(
 ): QaAssertionResult {
   switch (spec.kind) {
     case 'value_equals':
+    case 'equals':
       return assertionFromVerification(spec, verifyValue(String(spec.expected ?? ''), findElement(observation, spec), 'WEBSITE_BUG'));
+    case 'contains':
+      return assertionFromVerification(spec, verifyContains(String(spec.expected ?? ''), findElement(observation, spec), 'WEBSITE_BUG'));
     case 'value_not_default':
+    case 'not_default':
       return assertionFromVerification(spec, verifyNotDefault(spec, findElement(observation, spec)));
     case 'selected_equals':
+    case 'select_label_matches':
       return assertionFromVerification(spec, verifySelected(String(spec.expected ?? ''), findElement(observation, spec), 'WEBSITE_BUG'));
+    case 'valid_future_year':
+      return assertionFromVerification(spec, verifyFutureYear(findElement(observation, spec)));
+    case 'not_empty':
+      return assertionFromVerification(spec, verifyNotEmpty(findElement(observation, spec)));
+    case 'changed':
+      return assertionFromVerification(spec, verifyChanged(spec, findElement(observation, spec)));
     case 'selected_not_default':
       return assertionFromVerification(spec, verifyNotDefault(spec, findElement(observation, spec), true));
     case 'text_includes':
@@ -143,22 +177,75 @@ function verifyPlanAssertion(
   }
 }
 
+function missingElementResult(expected: string): QaVerificationResult {
+  return {
+    expected,
+    actual: null,
+    status: 'BLOCKED',
+    rootCause: 'VERIFICATION_MAPPING_ERROR',
+    message: 'Could not find the field in the final DOM observation.'
+  };
+}
+
 function verifyValue(expected: string, element: ObservedElement | null, blockedRootCause: QaRootCause): QaVerificationResult {
-  if (!element) {
-    return {
-      expected,
-      actual: null,
-      status: 'BLOCKED',
-      rootCause: blockedRootCause,
-      message: 'Could not find the field in the final DOM observation.'
-    };
-  }
+  if (!element) return missingElementResult(expected);
   const actual = String(element.value ?? '');
   return {
     expected: redactSensitiveText(expected, element.description),
     actual: redactSensitiveText(actual, element.description),
     status: actual === expected ? 'PASS' : 'FAIL',
     rootCause: actual === expected ? undefined : 'WEBSITE_BUG'
+  };
+}
+
+function verifyContains(expected: string, element: ObservedElement | null, mismatchRootCause: QaRootCause): QaVerificationResult {
+  if (!element) return missingElementResult(expected);
+  const actual = String(element.value ?? element.text ?? '');
+  const passed = normalize(actual).includes(normalize(expected));
+  return {
+    expected: `Contains ${expected}`,
+    actual,
+    status: passed ? 'PASS' : 'FAIL',
+    rootCause: passed ? undefined : mismatchRootCause
+  };
+}
+
+function verifyFutureYear(element: ObservedElement | null): QaVerificationResult {
+  if (!element) return missingElementResult('Future Year');
+  const actual = String(element.value ?? element.text ?? '').trim();
+  const year = parseInt(actual, 10);
+  const currentYear = new Date().getFullYear();
+  const passed = !isNaN(year) && year >= currentYear;
+  return {
+    expected: `>= ${currentYear}`,
+    actual,
+    status: passed ? 'PASS' : 'FAIL',
+    rootCause: passed ? undefined : 'WEBSITE_BUG'
+  };
+}
+
+function verifyNotEmpty(element: ObservedElement | null): QaVerificationResult {
+  if (!element) return missingElementResult('Not Empty');
+  const actual = String(element.value ?? element.text ?? '').trim();
+  const passed = actual.length > 0;
+  return {
+    expected: 'Not Empty',
+    actual: actual === '' ? '<empty>' : actual,
+    status: passed ? 'PASS' : 'FAIL',
+    rootCause: passed ? undefined : 'WEBSITE_BUG'
+  };
+}
+
+function verifyChanged(spec: QaAssertionSpec, element: ObservedElement | null): QaVerificationResult {
+  if (!element) return missingElementResult('Changed value');
+  const actual = String(element.value ?? element.text ?? '').trim();
+  const initial = String(spec.expected ?? '').trim();
+  const passed = actual !== initial;
+  return {
+    expected: `Not equal to ${initial || 'initial'}`,
+    actual,
+    status: passed ? 'PASS' : 'FAIL',
+    rootCause: passed ? undefined : 'WEBSITE_BUG'
   };
 }
 

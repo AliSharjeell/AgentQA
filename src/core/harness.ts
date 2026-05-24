@@ -712,12 +712,43 @@ function buildDomSnapshotPython(): string {
         const wrappingLabel = el.closest('label');
         return wrappingLabel ? (wrappingLabel.innerText || wrappingLabel.textContent || '').replace(/\\s+/g, ' ').trim() : '';
       };
+      const visualLabel = (el) => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return '';
+        const tag = el.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') return '';
+        
+        const candidates = Array.from(document.querySelectorAll('label, span, div, p'));
+        let bestMatch = null;
+        let bestDist = Infinity;
+        for (const node of candidates) {
+          if (node === el || node.contains(el) || el.contains(node)) continue;
+          const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (!text || text.length > 60) continue;
+          
+          const nRect = node.getBoundingClientRect();
+          if (nRect.width === 0 || nRect.height === 0) continue;
+          
+          const isAbove = nRect.bottom <= rect.top + 8 && nRect.bottom >= rect.top - 40 && nRect.left >= rect.left - 40 && nRect.left <= rect.right;
+          const isLeft = nRect.right <= rect.left + 8 && nRect.right >= rect.left - 150 && nRect.top >= rect.top - 15 && nRect.bottom <= rect.bottom + 15;
+          
+          if (isAbove || isLeft) {
+            const dist = isAbove ? rect.top - nRect.bottom : rect.left - nRect.right;
+            if (dist >= 0 && dist < bestDist) {
+              bestDist = dist;
+              bestMatch = text;
+            }
+          }
+        }
+        return bestMatch || '';
+      };
       const describe = (el) => {
         const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const stableName = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.id || el.getAttribute('name') || '';
         const base = (
           el.getAttribute('aria-label') ||
           labelledText(el) ||
+          visualLabel(el) ||
           el.getAttribute('title') ||
           el.getAttribute('placeholder') ||
           text ||
