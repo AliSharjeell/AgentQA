@@ -22,8 +22,10 @@
  *   --mode       Testing mode: text | vision (default: text)
  *   --agent-mode Harness mode: standard | browser-use | advanced (default: standard)
  *   --max-steps  Maximum agent loop steps (default: 25)
+ *   --max-batch-size Maximum deterministic batch size
  *   --template   Built-in QA template id
  *   --output-dir Directory where QA artifacts are written
+ *   --output     Alias for --output-dir
  *   --json       Output result as JSON instead of text report
  *
  * Output:
@@ -74,6 +76,9 @@ function parseArgs(argv: string[]): ParsedArgs {
        arg === "--mode" ||
        arg === "--agent-mode" ||
        arg === "--output-dir" ||
+       arg === "--output" ||
+       arg === "--max-batch-size" ||
+       arg === "--maxBatchSize" ||
        arg === "--template" ||
        arg === "--api-base-url" ||
        arg === "--base-url") &&
@@ -276,9 +281,11 @@ OPTIONS:
   --mode       Testing mode: text | vision (default: text)
   --agent-mode Harness mode: standard | browser-use | advanced (default: standard)
   --max-steps  Maximum agent loop steps (default: 25)
+  --max-batch-size Maximum deterministic batch size
   --allow-escalation Allow executor switch requests outside advanced mode
   --template   Built-in QA template id
   --output-dir Directory where QA artifacts are written
+  --output     Alias for --output-dir
   --json       Output result as JSON instead of text report
 
 EXAMPLES:
@@ -408,7 +415,20 @@ EXAMPLES:
     ["standard", "browser-use", "advanced"].includes(String(options.mode || "").toLowerCase()) ? options.mode : undefined
   ));
   const maxSteps = options["max-steps"] ? parseInt(String(options["max-steps"]), 10) : undefined;
+  const maxBatchSizeValue = options["max-batch-size"] || options.maxBatchSize;
+  const maxBatchSize = maxBatchSizeValue ? parseInt(String(maxBatchSizeValue), 10) : undefined;
   const allowEscalation = parseBoolean(options["allow-escalation"] || options.allowEscalation);
+  if (maxBatchSize && Number.isFinite(maxBatchSize) && maxBatchSize > 0) {
+    settings.batching = {
+      mode: settings.batching?.mode || "dynamic",
+      defaultBatchSize: settings.batching?.defaultBatchSize || Math.min(maxBatchSize, 5),
+      maxBatchSize,
+      allowLargeBatches: settings.batching?.allowLargeBatches ?? true,
+      requireSamePageForBatch: settings.batching?.requireSamePageForBatch ?? true,
+      verifyAfterBatch: settings.batching?.verifyAfterBatch ?? true,
+      verifyEachSubAction: settings.batching?.verifyEachSubAction ?? true
+    };
+  }
 
   if (verbose) {
     log(`\n=========================================`);
@@ -429,7 +449,7 @@ EXAMPLES:
     mode: agentMode,
     maxSteps,
     allowEscalation,
-    outputDir: options["output-dir"] ? String(options["output-dir"]) : undefined,
+    outputDir: options["output-dir"] || options.output ? String(options["output-dir"] || options.output) : undefined,
     templateId: options.template ? String(options.template) : undefined,
     visionMode: options.mode === "vision" || Boolean(options.vision) || settings.visionMode,
     onStep: verbose
@@ -467,7 +487,7 @@ EXAMPLES:
     log("");
   }
 
-  const isPassed = result.ok && (!result.report || ["PASS", "WARNING", "SKIPPED"].includes(result.report.status));
+  const isPassed = result.ok && (!result.report || ["PASS", "PASS_WITH_WARNINGS", "WARNING", "SKIPPED"].includes(result.report.status));
   process.exit(isPassed ? 0 : 1);
 }
 

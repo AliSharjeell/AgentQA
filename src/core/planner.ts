@@ -103,9 +103,9 @@ function planForTemplate(template: QaTemplate, prompt: string, targetUrl: string
 
 function fullFormPlan(task: string): QaTestPlan {
   const assertions: QaAssertionSpec[] = [
-    textValue('ASSERT-001', 'First Name value equals John', 'John', ['input[name="01___title"]', 'input[name*="fname"]', 'input[name*="first"]'], ['first name'], 'AC-001'),
+    textValue('ASSERT-001', 'First Name value equals John', 'John', ['input[name="02frstname"]', 'input[name*="fname"]', 'input[name*="first"]'], ['first name'], 'AC-001'),
     textValue('ASSERT-002', 'Last Name value equals Doe', 'Doe', ['input[name*="lname"]', 'input[name*="last"]'], ['last name'], 'AC-001'),
-    textValue('ASSERT-003', 'Email value equals john.doe@example.com', 'john.doe@example.com', ['input[type="email"]', 'input[name*="email"]'], ['email'], 'AC-001'),
+    textValue('ASSERT-003', 'Email value equals planned email value', 'testuser@example.com', ['input[type="email"]', 'input[name*="email"]'], ['email'], 'AC-001'),
     selectedEquals('ASSERT-004', 'Card Type selected label equals Visa', 'Visa', ['select[name="40cc__type"]', 'select[name*="cc"][name*="type"]'], ['card type'], 'AC-003'),
     selectedNotDefault('ASSERT-005', 'Expiry Month selected value is not default', ['select[name="42ccexp_mm"]', 'select[name*="exp"][name*="mm"]'], ['expiry month', 'exp month'], 'AC-003'),
     selectedNotDefault('ASSERT-006', 'Expiry Year selected value is not expired/default', ['select[name="43ccexp_yy"]', 'select[name*="exp"][name*="yy"]'], ['expiry year', 'exp year'], 'AC-003'),
@@ -340,4 +340,3 @@ function selectedNotDefault(
     acceptanceCriteriaId
   };
 }
-

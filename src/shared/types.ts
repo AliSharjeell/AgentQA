@@ -83,6 +83,8 @@ export type QaRootCause =
   | "AGENT_LIMITATION"
   | "AGENT_INTERNAL_ERROR"
   | "VERIFICATION_MAPPING_ERROR"
+  | "VERIFICATION_SELECTOR_FAILURE"
+  | "ASSERTION_EXPECTED_VALUE_MISMATCH"
   | "TEST_DATA_ISSUE"
   | "ENVIRONMENT_ISSUE"
   | "AMBIGUOUS"
@@ -221,12 +223,16 @@ export interface QaRunAction {
   action: string;
   target?: string;
   field_id?: string;
+  temporary_observation_id?: string;
+  label?: string;
   selector?: string;
   input?: string | number | boolean | null;
   initial_value?: string | number | boolean | null;
   planned_value?: string | number | boolean | null;
   post_action_actual_value?: string | number | boolean | null;
+  post_action_verification?: QaVerificationResult;
   final_actual_value?: string | number | boolean | null;
+  final_verification?: QaVerificationResult;
   actual_value?: string | number | boolean | null;
   action_result: "SUCCESS" | "FAILED" | "BLOCKED" | "SKIPPED";
   verification?: QaVerificationResult;
@@ -298,6 +304,9 @@ export interface QaRunStats {
   assertions_blocked: number;
   console_errors: number;
   network_errors: number;
+  critical_network_errors?: number;
+  field_registry_count?: number;
+  verified_fields_count?: number;
 }
 
 export interface QaArtifactManifest {
@@ -321,13 +330,20 @@ export interface QaRunResult {
   title: string;
   target_url: string;
   status: QaVerdict;
+  status_source?: "VERIFICATION_ENGINE";
   root_cause?: QaRootCause;
   severity: QaSeverity;
   summary: string;
   environment: QaEnvironment;
   stats: QaRunStats;
+  network_errors?: (string | QaNetworkErrorDetail)[];
   acceptance_criteria: QaAcceptanceCriterion[];
   issues: QaIssue[];
+  product_issues?: QaIssue[];
+  agent_issues?: QaIssue[];
+  verifier_issues?: QaIssue[];
+  test_data_issues?: QaIssue[];
+  environment_issues?: QaIssue[];
   actions: QaRunAction[];
   assertions: QaAssertionResult[];
   artifacts: QaArtifactManifest;
@@ -337,6 +353,12 @@ export interface QaRunResult {
   started_at: string;
   ended_at: string;
   duration_ms: number;
+  verification_summary?: {
+    status: QaVerdict;
+    field_registry_count: number;
+    verified_fields_count: number;
+    verifier_error?: string;
+  };
   raw_agent_report?: {
     status?: string;
     trusted: boolean;

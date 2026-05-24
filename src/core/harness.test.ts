@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildVerificationScript } from './harness';
+import { buildVerificationScript, safeJsonForInjectedJs, validateInjectedScript } from './harness';
 
 describe('buildVerificationScript', () => {
-  it('Injected verifier does not use arguments[0] and successfully reads values from a sample registry', () => {
+  it('serializes the field registry into the injected verifier script without template placeholders', () => {
     const sampleRegistry = [
       {
         field_id: 'test_field_1',
@@ -13,13 +13,18 @@ describe('buildVerificationScript', () => {
 
     const script = buildVerificationScript(sampleRegistry as any);
 
-    // Should contain the serialized json
-    expect(script).toContain(JSON.stringify(JSON.stringify(sampleRegistry)));
-    
-    // Should NOT contain arguments[0]
+    expect(script).not.toContain('${');
     expect(script).not.toContain('arguments[0]');
-    
-    // Should contain the embedded registry assignment
-    expect(script).toContain('const registry = " + json.dumps(registry) + ";');
+    const assignment = script.match(/script = ("(?:\\.|[^"])*")/);
+    expect(assignment).not.toBeNull();
+    const injected = JSON.parse(assignment![1]) as string;
+    expect(injected).toContain(`const registry = ${safeJsonForInjectedJs(sampleRegistry)}`);
+    validateInjectedScript(injected, 'unit-field-verifier');
+  });
+
+  it('fails preflight when an injected script still contains an uninterpolated placeholder', () => {
+    expect(() => validateInjectedScript('(() => { const x = ${bad}; })()', 'unit-placeholder')).toThrow(
+      /uninterpolated template placeholder/
+    );
   });
 });

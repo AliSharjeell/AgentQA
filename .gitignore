@@ -4,6 +4,8 @@ out/
 .vite/
 *.log
 profiles/
+debug/
+qa-runs/
 jobagent.sqlite
 jobagent.sqlite-*
 lead-scrapper.sqlite

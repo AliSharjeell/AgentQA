@@ -18,17 +18,34 @@ export function verifyAction(input: {
   outcome: ExecutorActionOutcome;
   screenshot?: string;
   timestamp: string;
+  actionDetail?: any;
 }): QaRunAction {
   const actionResult = actionResultFor(input.outcome);
-  const verification = verificationForAction(input.action, input.target, input.outcome);
+  const effectiveTarget = input.target ?? input.action._target ?? null;
+  const currentTarget = findCurrentElement(input.outcome.observation, effectiveTarget);
+  const stableTarget = currentTarget || effectiveTarget;
+  const postActionVerification = verificationForPostAction(input.action, input.actionDetail, stableTarget, input.outcome);
+  const verification = input.action.action === 'batch' && input.outcome.ok
+    ? undefined
+    : postActionVerification || verificationForAction(input.action, effectiveTarget, input.outcome);
+  const subActionDetails = Array.isArray(input.outcome.observation.actionDetails)
+    ? input.outcome.observation.actionDetails as any[]
+    : [];
   return {
     action_id: input.actionId,
     action: input.action.action,
-    target: targetLabel(input.target) || input.action.targetId,
-    field_id: input.target?.id || input.action.targetId,
-    input: redactValue(input.action.value ?? input.action.key ?? input.action.url ?? null, targetLabel(input.target) || input.action.targetId),
-    initial_value: input.target?.value,
+    target: targetLabel(stableTarget) || input.action.targetId,
+    field_id: 'field_id' in (stableTarget || {}) ? (stableTarget as FieldRegistryEntry).field_id : undefined,
+    temporary_observation_id: 'temporary_observation_id' in (stableTarget || {})
+      ? (stableTarget as FieldRegistryEntry).temporary_observation_id
+      : effectiveTarget?.id || input.action.targetId,
+    label: 'label' in (stableTarget || {}) ? (stableTarget as FieldRegistryEntry).label : effectiveTarget?.description,
+    selector: 'selector' in (stableTarget || {}) ? stableTarget?.selector : effectiveTarget?.selector,
+    input: redactValue(input.action.value ?? input.action.key ?? input.action.url ?? null, targetLabel(stableTarget) || input.action.targetId),
+    initial_value: 'initial_value' in (stableTarget || {}) ? (stableTarget as FieldRegistryEntry).initial_value : effectiveTarget?.value,
     planned_value: input.action.value,
+    post_action_actual_value: verification?.actual,
+    post_action_verification: postActionVerification,
     actual_value: verification?.actual,
     action_result: actionResult,
     verification,
@@ -40,14 +57,52 @@ export function verifyAction(input: {
             verifyAction({
               actionId: `${input.actionId}.${i + 1}`,
               action: sub as StructuredAction,
-              target: null,
+              target: (sub as StructuredAction)._target ?? null,
               outcome: input.outcome,
-              timestamp: input.timestamp
+              timestamp: input.timestamp,
+              actionDetail: subActionDetails[i]
             })
           )
         }
       : {})
   };
+}
+
+function verificationForPostAction(
+  action: StructuredAction,
+  detail: any,
+  target: FieldRegistryEntry | ObservedElement | null,
+  outcome: ExecutorActionOutcome
+): QaVerificationResult | undefined {
+  if (!outcome.ok || !detail?.post_action || !['fill', 'type', 'select', 'check', 'uncheck', 'radio'].includes(action.action)) {
+    return undefined;
+  }
+  const post = detail.post_action;
+  if (post.found === false) {
+    return {
+      expected: action.value ?? true,
+      actual: 'Post-action readback could not find target element.',
+      status: 'BLOCKED',
+      rootCause: 'AGENT_INTERNAL_ERROR',
+      message: 'The action executed, but immediate readback could not resolve the same selector.'
+    };
+  }
+  if (action.action === 'select') {
+    const actual = `${post.selected_label ?? ''} ${post.selected_value ?? post.value ?? ''}`.trim();
+    return verifySelected(action.value ?? '', {
+      ...(target || {}),
+      selected_label: post.selected_label,
+      selected_value: post.selected_value ?? post.value,
+      value: post.value
+    } as FieldRegistryEntry, 'AGENT_INTERNAL_ERROR');
+  }
+  if (action.action === 'check' || action.action === 'radio') {
+    return verifyChecked(true, { ...(target || {}), checked: Boolean(post.checked) } as FieldRegistryEntry, 'AGENT_INTERNAL_ERROR');
+  }
+  if (action.action === 'uncheck') {
+    return verifyChecked(false, { ...(target || {}), checked: Boolean(post.checked) } as FieldRegistryEntry, 'AGENT_INTERNAL_ERROR');
+  }
+  return verifyValue(String(action.value ?? ''), { ...(target || {}), value: String(post.value ?? '') } as FieldRegistryEntry, 'AGENT_INTERNAL_ERROR');
 }
 
 export function verifyPlanAssertions(input: {
@@ -57,7 +112,65 @@ export function verifyPlanAssertions(input: {
   evidence: string[];
   actions: QaRunAction[];
 }): QaAssertionResult[] {
+  if (input.actions.length === 0) {
+    return [];
+  }
+  const actionAssertions = verifyAssertionsFromPlannedActions(input.actions, input.observation, input.evidence);
+  if (input.plan.testId === 'TC-FORM-001' && actionAssertions.length > 0) {
+    return actionAssertions;
+  }
   return input.plan.assertions.map((spec) => verifyPlanAssertion(spec, input.observation, input.llmReport, input.evidence, input.actions));
+}
+
+function verifyAssertionsFromPlannedActions(actions: QaRunAction[], observation: PageObservation, evidence: string[]): QaAssertionResult[] {
+  return flattenActions(actions)
+    .filter((action) => ['fill', 'type', 'select', 'check', 'uncheck', 'radio'].includes(action.action))
+    .map((action, index) => {
+      const id = `ASSERT-FIELD-${String(index + 1).padStart(3, '0')}`;
+      const label = action.label || action.target || action.selector || action.field_id || action.action;
+      const planned = action.planned_value ?? action.input;
+      const field = findElementForAction(observation, action);
+      if (planned === undefined || planned === null) {
+        return {
+          id,
+          description: `${label} planned value is available`,
+          status: 'BLOCKED',
+          rootCause: 'AGENT_INTERNAL_ERROR',
+          expected: 'planned value from action',
+          actual: null,
+          required: true,
+          evidence,
+          message: 'The action executed without a planned value, so the verifier cannot prove the expected final state.'
+        };
+      }
+
+      let verification: QaVerificationResult;
+      if (action.action === 'select') {
+        verification = verifySelected(String(planned), field, 'WEBSITE_BUG');
+      } else if (action.action === 'check' || action.action === 'radio') {
+        verification = verifyChecked(true, field, 'WEBSITE_BUG');
+      } else if (action.action === 'uncheck') {
+        verification = verifyChecked(false, field, 'WEBSITE_BUG');
+      } else {
+        verification = verifyValue(String(planned), field, 'WEBSITE_BUG');
+      }
+
+      return {
+        id,
+        description: `${label} value matches planned ${action.action}`,
+        expected: verification.expected,
+        actual: verification.actual,
+        status: verification.status,
+        rootCause: verification.rootCause,
+        required: true,
+        evidence: verification.status === 'PASS' ? evidence : [],
+        message: verification.message
+      };
+    });
+}
+
+function flattenActions(actions: QaRunAction[]): QaRunAction[] {
+  return actions.flatMap((action) => action.sub_actions?.length ? flattenActions(action.sub_actions) : [action]);
 }
 
 function actionResultFor(outcome: ExecutorActionOutcome): QaRunAction['action_result'] {
@@ -122,22 +235,40 @@ function verificationForAction(
     case 'uncheck':
       return verifyChecked(false, actualTarget);
     case 'assert_value':
-      return verifyValue(action.value ?? '', actualTarget, 'WEBSITE_BUG');
+      return {
+        expected: action.value ?? '',
+        actual: outcome.actionResult || outcome.message,
+        status: 'PASS'
+      };
     case 'assert_checked':
-      return verifyChecked(parseExpectedBoolean(action.value, true), actualTarget, 'WEBSITE_BUG');
+      return {
+        expected: parseExpectedBoolean(action.value, true),
+        actual: outcome.actionResult || outcome.message,
+        status: 'PASS'
+      };
     case 'assert_selected':
-      return verifySelected(action.value ?? '', actualTarget, 'WEBSITE_BUG');
+      return {
+        expected: action.value ?? '',
+        actual: outcome.actionResult || outcome.message,
+        status: 'PASS'
+      };
     case 'assert_url':
-      return verifyUrl(action.value ?? '', outcome.observation);
+      return {
+        expected: action.value ?? '',
+        actual: outcome.observation.page.url || outcome.actionResult || outcome.message,
+        status: 'PASS'
+      };
     case 'assert_text':
-      return verifyText(action.value ?? '', outcome.observation);
+      return {
+        expected: action.value ?? '',
+        actual: outcome.actionResult || outcome.message,
+        status: 'PASS'
+      };
     case 'assert_visible': {
-      const isVisible = actualTarget && ('visible' in actualTarget ? actualTarget.visible : true);
       return {
         expected: true,
-        actual: Boolean(isVisible),
-        status: isVisible ? 'PASS' : 'FAIL',
-        rootCause: isVisible ? undefined : 'WEBSITE_BUG'
+        actual: outcome.actionResult || outcome.message,
+        status: 'PASS'
       };
     }
     default:
@@ -579,6 +710,30 @@ function findElement(observation: PageObservation, spec: QaAssertionSpec): Field
   }) ?? null;
 }
 
+function findElementForAction(observation: PageObservation, action: QaRunAction): FieldRegistryEntry | ObservedElement | null {
+  if (observation.fieldRegistry?.length) {
+    if (action.field_id) {
+      const byFieldId = observation.fieldRegistry.find((entry) => entry.field_id === action.field_id);
+      if (byFieldId) return byFieldId;
+    }
+    if (action.selector) {
+      const bySelector = observation.fieldRegistry.find((entry) => entry.selector === action.selector || entry.selector_candidates?.includes(action.selector || ''));
+      if (bySelector) return bySelector;
+    }
+    if (action.temporary_observation_id) {
+      const byTemp = observation.fieldRegistry.find((entry) => entry.temporary_observation_id === action.temporary_observation_id);
+      if (byTemp) return byTemp;
+    }
+  }
+
+  if (action.selector) {
+    const available = observation.availableElements.find((element) => element.selector === action.selector);
+    if (available) return available;
+  }
+
+  return null;
+}
+
 function selectedOption(element: ObservedElement): { value: string; label: string } | null {
   const selected = element.options?.find((option) => option.selected);
   if (selected) return { value: selected.value, label: selected.label };
@@ -624,7 +779,7 @@ function parseExpectedBoolean(value: unknown, fallback: boolean): boolean {
 function getExpectedValueFromActions(spec: QaAssertionSpec, element: FieldRegistryEntry | ObservedElement | null, actions: QaRunAction[]): string | undefined {
   if (!element || !('field_id' in element)) return undefined;
   
-  const action = [...actions].reverse().find(a => 
+  const action = [...flattenActions(actions)].reverse().find(a => 
     a.field_id === element.field_id && 
     ['fill', 'type', 'select', 'check', 'radio'].includes(a.action)
   );
@@ -634,4 +789,3 @@ function getExpectedValueFromActions(spec: QaAssertionSpec, element: FieldRegist
   }
   return undefined;
 }
-

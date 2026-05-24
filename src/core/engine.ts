@@ -14,7 +14,7 @@ import { createAgentExecutor, isExecutorAvailable, type AgentExecutor } from './
 import { buildPrompt, normalizeScript, type AgentHistoryEntry, type AgentPlanStep } from './prompt';
 import { EvidenceCollector } from './evidence';
 import { createTestPlan } from './planner';
-import { buildQaRunResult, applyValidatorGating, writeQaReportFiles } from './reporter';
+import { buildQaRunResult, applyValidatorGating, applyVerifierRuntimeErrorGate, writeQaReportFiles } from './reporter';
 import { verifyAction, verifyPlanAssertions } from './verification';
 import { runValidatorAudit } from './validator';
 
@@ -94,7 +94,8 @@ function parseObservation(raw: string, targetUrl: string): PageObservation {
       fieldRegistry: parsed.fieldRegistry || [],
       pageText: parsed.pageText || '',
       consoleErrors: parsed.consoleErrors || [],
-      networkErrors: parsed.networkErrors || []
+      networkErrors: parsed.networkErrors || [],
+      actionDetails: (parsed as any).actionDetails
     };
   } catch {
     return emptyObservation(targetUrl);
@@ -369,7 +370,36 @@ function makeReport(input: {
 }
 
 function resultToOk(report: QaRunResult): boolean {
-  return report.status === 'PASS' || report.status === 'WARNING' || report.status === 'SKIPPED';
+  return report.status === 'PASS' || report.status === 'PASS_WITH_WARNINGS' || report.status === 'WARNING' || report.status === 'SKIPPED';
+}
+
+function applyFinalFieldVerificationToActions(actions: QaRunAction[], registry: import('../shared/types').FieldRegistry): void {
+  const byFieldId = new Map(registry.map((field) => [field.field_id, field]));
+  const bySelector = new Map(registry.map((field) => [field.selector, field]));
+  const visit = (action: QaRunAction): void => {
+    const field = (action.field_id && byFieldId.get(action.field_id)) || (action.selector && bySelector.get(action.selector));
+    if (field) {
+      const actual = field.selected_value ?? field.value ?? field.actual_value ?? field.checked ?? null;
+      const expected = action.planned_value ?? action.input ?? null;
+      const actualText = `${field.selected_label ?? ''} ${actual ?? ''}`.trim();
+      const expectedText = expected === null || expected === undefined ? '' : String(expected);
+      const matched = !expectedText ||
+        String(actual ?? '') === expectedText ||
+        actualText.toLowerCase().includes(expectedText.toLowerCase());
+      action.final_actual_value = actual;
+      action.final_verification = {
+        expected,
+        actual,
+        actual_select: field.selected_value !== undefined || field.selected_label !== undefined
+          ? { value: String(field.selected_value ?? ''), label: String(field.selected_label ?? '') }
+          : undefined,
+        status: matched ? 'PASS' : 'FAIL',
+        rootCause: matched ? undefined : 'WEBSITE_BUG'
+      };
+    }
+    action.sub_actions?.forEach(visit);
+  };
+  actions.forEach(visit);
 }
 
 function addConsoleFaults(faults: QaFault[], observation: PageObservation, step: string): QaFault[] {
@@ -562,7 +592,6 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       if (fullScreenshot) evidence.push(fullScreenshot);
       accessibilityTreePath = await evidenceCollector.saveAccessibilityTree(executor);
     }
-    domAfterPath = evidenceCollector.saveDomSnapshot('dom-after.json', finalObservation);
     consoleLogPath = evidenceCollector.saveConsoleLog(observations);
     networkLogPath = evidenceCollector.saveNetworkLog(observations);
     let verifierRuntimeError: Error | null = null;
@@ -578,14 +607,20 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
             entry.selected_label = fr.selected_label;
           }
         }
+        applyFinalFieldVerificationToActions(qaActions, globalFieldRegistry);
       } catch (err: any) {
         verifierRuntimeError = err;
       }
     }
+    const verificationObservation = { ...finalObservation, fieldRegistry: globalFieldRegistry };
+    domAfterPath = evidenceCollector.saveDomSnapshot('dom-after.json', verificationObservation);
+    const reportingObservations = observations.length
+      ? [...observations.slice(0, -1), verificationObservation]
+      : [verificationObservation];
 
     const assertions = verifyPlanAssertions({
       plan: testPlan,
-      observation: { ...finalObservation, fieldRegistry: globalFieldRegistry },
+      observation: verificationObservation,
       llmReport: legacyReport,
       evidence: [...evidence, ...(legacyReport.evidence || [])],
       actions: qaActions
@@ -608,7 +643,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       durationMs: Date.now() - startTime,
       actions: qaActions,
       assertions,
-      observations,
+      observations: reportingObservations,
       llmReport: legacyReport,
       evidence: [...evidence, ...(legacyReport.evidence || [])],
       evidenceWarnings: evidenceCollector.getWarnings(),
@@ -616,21 +651,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     });
 
     if (verifierRuntimeError) {
-      finalReport.status = "BLOCKED";
-      finalReport.root_cause = "VERIFIER_RUNTIME_ERROR";
-      finalReport.issues.push({
-        id: "VERIFIER_ERROR",
-        title: "Verifier Runtime Error",
-        type: "VERIFIER_RUNTIME_ERROR",
-        severity: "CRITICAL",
-        status: "BLOCKED",
-        expected: "Successful verification",
-        actual: `Error: ${verifierRuntimeError.message}`,
-        affected_elements: [],
-        evidence: { screenshots: [] },
-        recommendation: "Check if the JS verification script has syntax errors.",
-        reproSteps: ["Run deterministic verifier script"]
-      });
+      applyVerifierRuntimeErrorGate(finalReport, verifierRuntimeError);
     }
 
     if (!verifierRuntimeError) {

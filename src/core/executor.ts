@@ -93,7 +93,8 @@ export function parsePageObservation(raw: string, targetUrl: string): PageObserv
       fieldRegistry: (parsed as any).fieldRegistry || [],
       pageText: parsed.pageText || '',
       consoleErrors: parsed.consoleErrors || [],
-      networkErrors: parsed.networkErrors || []
+      networkErrors: parsed.networkErrors || [],
+      actionDetails: (parsed as any).actionDetails
     };
   } catch {
     return emptyObservation(targetUrl);

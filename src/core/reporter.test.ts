@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { QaAssertionResult, QaRunAction } from '../shared/types';
 import type { PageObservation } from './harness';
 import type { QaTestPlan } from './planner';
-import { applyValidatorGating, buildQaRunResult } from './reporter';
+import { applyValidatorGating, applyVerifierRuntimeErrorGate, buildQaRunResult } from './reporter';
 import type { QaValidatorResult } from '../shared/types';
 
 const basePlan: QaTestPlan = {
@@ -162,11 +162,11 @@ describe('QA verdict reporting', () => {
     expect(result.stats.assertions_blocked).toBe(1);
   });
 
-  it('returns WARNING when assertions pass but screenshot evidence is partial', () => {
+  it('returns PASS_WITH_WARNINGS when assertions pass but screenshot evidence is partial', () => {
     const result = build({
       evidenceWarnings: [{ message: 'Required screenshot capture failed', artifact: 'screenshots/04_final_state.png' }]
     });
-    expect(result.status).toBe('WARNING');
+    expect(result.status).toBe('PASS_WITH_WARNINGS');
     expect(result.evidence_status).toBe('PARTIAL');
   });
 
@@ -239,8 +239,8 @@ describe('QA verdict reporting', () => {
     expect(result.reproducible_steps).toEqual(['type #name = Jane', 'click #submit']);
   });
 
-  // Bug Fix 9: Network errors cause WARNING, not BLOCKED/FAIL.
-  it('returns WARNING for network errors when everything else passes', () => {
+  // Bug Fix 9: Network errors cause warnings, not BLOCKED/FAIL.
+  it('returns PASS_WITH_WARNINGS for non-critical network errors when everything else passes', () => {
     const obsWithNetworkError = { ...observation, networkErrors: ['Failed to fetch analytics.js'] };
     const result = buildQaRunResult({
       runId: 'qa-run-unit',
@@ -257,8 +257,8 @@ describe('QA verdict reporting', () => {
       evidenceWarnings: [],
       artifacts: { html_report: '', markdown_report: '', json_result: '', screenshots_dir: '' }
     });
-    expect(result.status).toBe('WARNING');
-    expect(result.root_cause).toBe('ENVIRONMENT_ISSUE');
+    expect(result.status).toBe('PASS_WITH_WARNINGS');
+    expect(result.root_cause).toBeUndefined();
   });
 
   // Bug Fix 10: AI reasoning tab says [object Object]
@@ -267,6 +267,28 @@ describe('QA verdict reporting', () => {
     expect(result.raw_agent_report).toBeDefined();
     expect(result.raw_agent_report?.trusted).toBe(false);
     expect(result.raw_agent_report?.raw_data).toEqual(expect.objectContaining({ result: 'PASS' }));
+  });
+
+  it('gates verifier runtime errors so no WEBSITE_BUG issues or failed assertions remain', () => {
+    const result = build({
+      assertions: [{
+        ...passAssertion(),
+        status: 'FAIL',
+        expected: 'John',
+        actual: '',
+        rootCause: 'WEBSITE_BUG'
+      }]
+    });
+
+    applyVerifierRuntimeErrorGate(result, new Error('Injected JS syntax error in field-verifier: Unexpected token "{"'));
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.root_cause).toBe('VERIFIER_RUNTIME_ERROR');
+    expect(result.issues.some((issue) => issue.type === 'WEBSITE_BUG')).toBe(false);
+    expect(result.product_issues).toEqual([]);
+    expect(result.stats.assertions_failed).toBe(0);
+    expect(result.assertions.every((assertion) => assertion.status === 'BLOCKED')).toBe(true);
+    expect(result.summary).toContain('final DOM verification failed');
   });
 });
 

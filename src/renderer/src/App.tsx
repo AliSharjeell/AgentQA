@@ -30,6 +30,7 @@ import {
 import type {
   QaTask,
   QaReport,
+  QaIssue,
   QaTemplate,
   QaVerdict,
   BrowserState,
@@ -630,7 +631,7 @@ function StatusIcon({ status, size = 14 }: { status: QaTask["status"]; size?: nu
 
 // ─── Report Badge ──────────────────────────────────────────────────────────
 
-type QaReportTab = "summary" | "issues" | "steps" | "screenshots" | "console" | "json";
+type QaReportTab = "summary" | "product" | "agent" | "assertions" | "steps" | "screenshots" | "console" | "json";
 
 function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX.Element {
   const [tab, setTab] = useState<QaReportTab>("summary");
@@ -638,6 +639,14 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
   const result = report.resultJson;
   const status = (report.status || result?.status || "BLOCKED") as QaVerdict;
   const screenshotPaths = report.screenshots || [];
+  const productIssues = result?.product_issues || (report.issues || []).filter((issue) => issue.category === "PRODUCT_ISSUE");
+  const agentIssues = [
+    ...(result?.agent_issues || []),
+    ...(result?.verifier_issues || []),
+    ...(result?.test_data_issues || []),
+    ...(result?.environment_issues || [])
+  ];
+  const confidence = result?.validator_review?.confidence || (status === "PASS" || status === "PASS_WITH_WARNINGS" ? "HIGH" : "MEDIUM");
 
   useEffect(() => {
     if (!window.qaApi || screenshotPaths.length === 0) return;
@@ -657,22 +666,28 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
   return (
     <div className="qa-report-panel space-y-3 select-text">
       <div className="qa-report-header">
-        <div className={`qa-status-badge ${statusTone(status)}`}>{status}</div>
+        <div className={`qa-status-badge ${statusTone(status)}`}>Verdict: {status}</div>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium text-zinc-100 break-words">{report.title || report.taskName}</p>
           <p className="text-[10px] text-zinc-500 break-all">{report.targetUrl}</p>
+          <p className="mt-0.5 text-[9px] uppercase tracking-wide text-zinc-600">Run Completed: {report.endTime ? "Yes" : "No"}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-1.5">
-        <Metric label="Passed" value={report.passedSteps} tone="text-green-300" />
-        <Metric label="Failed" value={report.failedSteps} tone="text-red-300" />
-        <Metric label="Blocked" value={report.blockedSteps || 0} tone="text-amber-300" />
+        <Metric label="Passed" value={result?.stats.assertions_passed ?? report.passedSteps} tone="text-green-300" />
+        <Metric label="Failed" value={result?.stats.assertions_failed ?? report.failedSteps} tone="text-red-300" />
+        <Metric label="Blocked" value={result?.stats.assertions_blocked ?? (report.blockedSteps || 0)} tone="text-amber-300" />
+        <Metric label="Root Cause" value={report.rootCause || result?.root_cause || "None"} tone="text-zinc-300" />
+        <Metric label="Browser" value={result?.environment.browser || "chromium"} tone="text-zinc-300" />
+        <Metric label="Confidence" value={confidence} tone="text-zinc-300" />
       </div>
 
       <div className="qa-tabbar">
         <TabButton active={tab === "summary"} icon={<FileText size={11} />} label="Summary" onClick={() => setTab("summary")} />
-        <TabButton active={tab === "issues"} icon={<ShieldAlert size={11} />} label="Issues" onClick={() => setTab("issues")} />
+        <TabButton active={tab === "product"} icon={<ShieldAlert size={11} />} label="Product Issues" onClick={() => setTab("product")} />
+        <TabButton active={tab === "agent"} icon={<AlertCircle size={11} />} label="Agent Issues" onClick={() => setTab("agent")} />
+        <TabButton active={tab === "assertions"} icon={<CheckCircle2 size={11} />} label="Assertions" onClick={() => setTab("assertions")} />
         <TabButton active={tab === "steps"} icon={<ListChecks size={11} />} label="Steps" onClick={() => setTab("steps")} />
         <TabButton active={tab === "screenshots"} icon={<Image size={11} />} label="Shots" onClick={() => setTab("screenshots")} />
         <TabButton active={tab === "console"} icon={<Terminal size={11} />} label="Console" onClick={() => setTab("console")} />
@@ -697,21 +712,39 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
         </div>
       )}
 
-      {tab === "issues" && (
+      {tab === "product" && (
         <div className="space-y-2">
-          {(report.issues || []).length === 0 ? (
-            <p className="text-[11px] text-zinc-500">No issues found.</p>
+          {productIssues.length === 0 ? (
+            <p className="text-[11px] text-zinc-500">No verified product issues found.</p>
           ) : (
-            (report.issues || []).map((issue) => (
-              <div key={issue.id} className="rounded-md border border-white/8 bg-zinc-950/60 p-2">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <p className="text-[11px] font-medium text-zinc-100">{issue.title}</p>
-                  <span className="text-[9px] uppercase tracking-wide text-zinc-500">{issue.severity}</span>
+            productIssues.map((issue) => <IssueCard key={issue.id} issue={issue} />)
+          )}
+        </div>
+      )}
+
+      {tab === "agent" && (
+        <div className="space-y-2">
+          {agentIssues.length === 0 ? (
+            <p className="text-[11px] text-zinc-500">No AgentQA, verifier, test data, or environment issues found.</p>
+          ) : (
+            agentIssues.map((issue) => <IssueCard key={issue.id} issue={issue} />)
+          )}
+        </div>
+      )}
+
+      {tab === "assertions" && (
+        <div className="space-y-1.5">
+          {(report.assertions || []).length === 0 ? (
+            <p className="text-[11px] text-zinc-500">No assertions were produced.</p>
+          ) : (
+            (report.assertions || []).map((assertion) => (
+              <div key={assertion.id} className="rounded-md border border-white/8 bg-zinc-950/60 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="min-w-0 break-words text-[10px] text-zinc-200">{assertion.description}</p>
+                  <span className={`shrink-0 text-[9px] uppercase tracking-wide ${assertion.status === "PASS" ? "text-green-300" : assertion.status === "FAIL" ? "text-red-300" : "text-amber-300"}`}>{assertion.status}</span>
                 </div>
-                <p className="text-[10px] text-zinc-500">{issue.type}</p>
-                <p className="mt-1 text-[10px] text-zinc-300">Expected: {issue.expected}</p>
-                <p className="text-[10px] text-zinc-400">Actual: {issue.actual}</p>
-                <p className="mt-1 text-[10px] text-zinc-500">{issue.recommendation}</p>
+                <p className="mt-1 break-all text-[9px] text-zinc-500">Expected: {String(assertion.expected ?? "")}</p>
+                <p className="break-all text-[9px] text-zinc-500">Actual: {String(assertion.actual ?? "")}</p>
               </div>
             ))
           )}
@@ -752,6 +785,10 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
         <div className="space-y-2">
           <Metric label="Console Errors" value={result?.stats.console_errors || 0} tone="text-zinc-300" />
           <Metric label="Network Errors" value={result?.stats.network_errors || 0} tone="text-zinc-300" />
+          <Metric label="Critical Network" value={result?.stats.critical_network_errors || 0} tone="text-zinc-300" />
+          {(result?.network_errors || []).slice(0, 8).map((entry, index) => (
+            <pre key={index} className="whitespace-pre-wrap rounded-md border border-white/8 bg-black/30 p-2 text-[9px] text-zinc-400">{JSON.stringify(entry, null, 2)}</pre>
+          ))}
           <p className="break-all text-[10px] text-zinc-500">{report.artifacts?.console_log || "console.log"} / {report.artifacts?.network_log || "network.json"}</p>
         </div>
       )}
@@ -779,6 +816,24 @@ function Metric({ label, value, tone }: { label: string; value: number | string;
   );
 }
 
+function IssueCard({ issue }: { issue: QaIssue }): JSX.Element {
+  return (
+    <div className="rounded-md border border-white/8 bg-zinc-950/60 p-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="min-w-0 break-words text-[11px] font-medium text-zinc-100">{issue.title}</p>
+        <span className="shrink-0 text-[9px] uppercase tracking-wide text-zinc-500">{issue.severity}</span>
+      </div>
+      <p className="text-[10px] text-zinc-500">{issue.category || "REPORT"} / {issue.type}</p>
+      <p className="mt-1 break-words text-[10px] text-zinc-300">Expected: {issue.expected}</p>
+      <p className="break-words text-[10px] text-zinc-400">Actual: {issue.actual}</p>
+      {issue.evidence?.screenshots?.length ? (
+        <p className="mt-1 break-all text-[9px] text-zinc-600">Evidence: {issue.evidence.screenshots.join(", ")}</p>
+      ) : null}
+      <p className="mt-1 break-words text-[10px] text-zinc-500">{issue.recommendation}</p>
+    </div>
+  );
+}
+
 function TabButton({ active, icon, label, onClick }: { active: boolean; icon: JSX.Element; label: string; onClick: () => void }): JSX.Element {
   return (
     <button
@@ -793,6 +848,7 @@ function TabButton({ active, icon, label, onClick }: { active: boolean; icon: JS
 
 function statusTone(status: QaVerdict): string {
   if (status === "PASS") return "border-green-400/30 bg-green-400/10 text-green-300";
+  if (status === "PASS_WITH_WARNINGS") return "border-yellow-400/30 bg-yellow-400/10 text-yellow-300";
   if (status === "FAIL") return "border-red-400/30 bg-red-400/10 text-red-300";
   if (status === "BLOCKED") return "border-amber-400/30 bg-amber-400/10 text-amber-300";
   if (status === "WARNING") return "border-yellow-400/30 bg-yellow-400/10 text-yellow-300";

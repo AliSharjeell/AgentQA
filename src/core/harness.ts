@@ -3,22 +3,36 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import type { FieldRegistry, FieldRegistryEntry } from '../shared/types';
+import type { FieldRegistry, FieldRegistryEntry, QaNetworkErrorDetail } from '../shared/types';
 
-export function assertValidInjectedJs(script: string, name: string) {
+export function safeJsonForInjectedJs(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+export function validateInjectedScript(script: string, name: string): void {
   try {
+    const placeholderIndex = script.indexOf('${');
+    if (placeholderIndex !== -1) {
+      const start = Math.max(0, placeholderIndex - 40);
+      const end = Math.min(script.length, placeholderIndex + 80);
+      throw new Error(`${name} contains uninterpolated template placeholder: ${script.slice(start, end)}`);
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(script);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    const numberedLines = script.split("\\n").map((line, i) => String(i + 1) + ": " + line).join("\\n");
-    const fullError = "Injected JS syntax error in " + name + ": " + errorMsg + "\\n" + numberedLines;
+    const numberedLines = script.split('\n').map((line, i) => `${i + 1}: ${line}`).join('\n');
+    const fullError = `Injected JS syntax error in ${name}: ${errorMsg}\n${numberedLines}`;
     
     try {
       const debugDir = path.join(process.cwd(), 'debug', 'injected-js');
       fs.mkdirSync(debugDir, { recursive: true });
-      fs.writeFileSync(path.join(debugDir, name + ".js"), script);
-      fs.writeFileSync(path.join(debugDir, name + "-error.txt"), fullError);
+      fs.writeFileSync(path.join(debugDir, `${name}.js`), script);
+      fs.writeFileSync(path.join(debugDir, `${name}-error.txt`), fullError);
     } catch (fsErr) {
       // Ignore file writing errors so we still throw the original
     }
@@ -26,6 +40,8 @@ export function assertValidInjectedJs(script: string, name: string) {
     throw new Error(fullError);
   }
 }
+
+export const assertValidInjectedJs = validateInjectedScript;
 
 const execAsync = promisify(exec);
 
@@ -114,7 +130,8 @@ export interface PageObservation {
   fieldRegistry?: FieldRegistry;
   pageText: string;
   consoleErrors: string[];
-  networkErrors: string[];
+  networkErrors: (string | QaNetworkErrorDetail)[];
+  actionDetails?: unknown;
 }
 
 export type StructuredActionName =
@@ -821,6 +838,28 @@ function buildDomSnapshotPython(): string {
         if (role) return role;
         return tag;
       };
+      const semanticFieldLabel = (description, el) => {
+        const name = String(el.getAttribute('name') || '').toLowerCase();
+        const id = String(el.id || '').toLowerCase();
+        const label = String(description || '').replace(/\\s+/g, ' ').trim();
+        const haystack = (label + ' ' + name + ' ' + id).toLowerCase();
+        const isMonth = /(month|_mm|(^|[^a-z])mm([^a-z]|$)|[0-9]+mm)/.test(haystack);
+        const isDay = /(day|_dd|(^|[^a-z])dd([^a-z]|$)|[0-9]+dd)/.test(haystack);
+        const isYear = /(year|_yy|_yyyy|(^|[^a-z])yy([^a-z]|$)|(^|[^a-z])yyyy([^a-z]|$)|[0-9]+yy)/.test(haystack);
+        if (/(exp|expiry|expiration|ccexp|card exp)/.test(haystack)) {
+          if (isMonth) return 'Expiry Month';
+          if (isYear) return 'Expiry Year';
+        }
+        if (/(birth|dob|date of birth)/.test(haystack)) {
+          if (isMonth) return 'Birth Month';
+          if (isDay) return 'Birth Day';
+          if (isYear) return 'Birth Year';
+        }
+        if (/^year\\s+[0-9]{4}/i.test(label) && /[0-9]+yy/.test(name)) return 'Birth Year';
+        if (/(e-mail|email|mailadr)/.test(haystack)) return 'Email';
+        if (/(web site|website|url)/.test(haystack)) return 'Website';
+        return label;
+      };
       const optionsFor = (el) => {
         const tag = el.tagName.toLowerCase();
         const role = el.getAttribute('role') || '';
@@ -912,7 +951,8 @@ function buildDomSnapshotPython(): string {
           }
 
           const sanitizeId = (str) => (str || '').replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_').toLowerCase().replace(/^_|_$/g, '').slice(0, 30);
-          const baseName = description || el.getAttribute('name') || el.id || tag;
+          const humanLabel = semanticFieldLabel(description, el);
+          const baseName = humanLabel || el.getAttribute('name') || el.id || tag;
           const field_id = 'field_' + sanitizeId(baseName) + '_' + (elements.length - 1);
 
           const sel = selectorFor(el);
@@ -923,7 +963,7 @@ function buildDomSnapshotPython(): string {
           registry.push({
             field_id,
             temporary_observation_id: 'elem_' + (elements.length - 1),
-            label: description.slice(0, 160),
+            label: humanLabel.slice(0, 160),
             selector: sel,
             selector_candidates: Array.from(new Set(selector_candidates)),
             tag,
@@ -968,29 +1008,51 @@ function buildDomSnapshotPython(): string {
     page_text = snapshot.get("pageText", "") if isinstance(snapshot, dict) else ""
     console_errors = snapshot.get("consoleErrors", []) if isinstance(snapshot, dict) else []
     network_errors = []
+    network_requests = {}
+    def network_is_critical(url, resource_type):
+        text = (str(url or "") + " " + str(resource_type or "")).lower()
+        if any(token in text for token in ["analytics", "favicon", "font", "ad", "tracker", "tracking", "pixel", "beacon", "image", "collect", "rmkt", "remarket", "doubleclick", "gtm", "google.com/rmkt"]):
+            return False
+        return any(token in text for token in ["document", "xhr", "fetch", "api"])
     try:
         for event in drain_events():
             method = event.get("method", "")
             params = event.get("params", {})
-            if method == "Network.loadingFailed":
+            if method == "Network.requestWillBeSent":
+                request = params.get("request", {})
+                network_requests[params.get("requestId")] = {
+                    "url": request.get("url", ""),
+                    "method": request.get("method", "GET"),
+                    "resource_type": params.get("type", "unknown")
+                }
+            elif method == "Network.loadingFailed":
+                request = network_requests.get(params.get("requestId"), {})
+                url = request.get("url", "")
+                resource_type = request.get("resource_type", params.get("type", "unknown"))
                 network_errors.append({
-                    "type": "loadingFailed",
-                    "requestId": params.get("requestId"),
-                    "errorText": params.get("errorText", ""),
-                    "blockedReason": params.get("blockedReason", "")
+                    "url": url,
+                    "method": request.get("method", "GET"),
+                    "status": params.get("errorText", "loadingFailed"),
+                    "resource_type": resource_type,
+                    "is_critical": network_is_critical(url, resource_type),
+                    "reason": params.get("blockedReason") or params.get("errorText", "loadingFailed")
                 })
             elif method == "Network.responseReceived":
                 response = params.get("response", {})
                 status = int(response.get("status", 0) or 0)
                 if status >= 400:
+                    url = response.get("url", "")
+                    resource_type = params.get("type", "unknown")
                     network_errors.append({
-                        "type": "httpError",
+                        "url": url,
+                        "method": network_requests.get(params.get("requestId"), {}).get("method", "GET"),
                         "status": status,
-                        "url": response.get("url", ""),
-                        "mimeType": response.get("mimeType", "")
+                        "resource_type": resource_type,
+                        "is_critical": network_is_critical(url, resource_type) or resource_type in ["Document", "XHR", "Fetch"],
+                        "reason": response.get("statusText", "HTTP error")
                     })
     except Exception as network_exc:
-        network_errors.append({"type": "captureFailed", "errorText": str(network_exc)})
+        network_errors.append({"url": "", "method": "GET", "status": "captureFailed", "resource_type": "unknown", "is_critical": False, "reason": str(network_exc)})
     observation = {
         "taskUrl": target_url,
         "page": info,
@@ -1240,6 +1302,64 @@ def read_target():
             return str(value)
     return str(active_target.get("value") or active_target.get("description") or active_target.get("text") or "")
 
+def read_selector_state(selector):
+    if not selector:
+        return None
+    sel = json.dumps(selector)
+    return js(f"""(() => {{
+      const el = document.querySelector({sel});
+      if (!el) return {{ found: false }};
+      const tag = el.tagName.toLowerCase();
+      const type = String(el.getAttribute('type') || '').toLowerCase();
+      let value = null;
+      let checked = null;
+      let selected_value = null;
+      let selected_label = null;
+      let selected_index = null;
+      let text = null;
+      if (tag === 'select') {{
+        const option = el.options[el.selectedIndex] || null;
+        selected_value = String(el.value || '');
+        selected_label = option ? String(option.label || option.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+        selected_index = el.selectedIndex;
+        value = selected_value;
+      }} else if (type === 'checkbox' || type === 'radio' || el.getAttribute('role') === 'checkbox' || el.getAttribute('role') === 'radio') {{
+        checked = Boolean(el.checked || el.getAttribute('aria-checked') === 'true');
+        value = String(el.value || '');
+      }} else if ('value' in el) {{
+        value = String(el.value || '');
+      }} else {{
+        text = String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        value = text;
+      }}
+      return {{
+        found: true,
+        tag,
+        type,
+        value,
+        text,
+        checked,
+        selected_value,
+        selected_label,
+        selected_index,
+        disabled: Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true'),
+        readOnly: Boolean(el.readOnly)
+      }};
+    }})()""")
+
+def action_detail(item, result, post_action=None):
+    active_target = item.get("_target") or target or {}
+    return {
+        "action": item.get("action"),
+        "targetId": item.get("targetId"),
+        "temporary_observation_id": active_target.get("id"),
+        "selector": active_target.get("selector") or "",
+        "label": active_target.get("description") or active_target.get("name") or "",
+        "planned_value": item.get("value") if item.get("value") is not None else item.get("key") if item.get("key") is not None else item.get("url"),
+        "summary": result,
+        "post_action": post_action
+    }
+
 def wait_for_target(value):
     active_target = action.get("_target") or target
     selector = (active_target or {}).get("selector") or str(value or "")
@@ -1355,18 +1475,25 @@ def execute_one(item):
     action = item
     kind = item.get("action")
     result = ""
+    active_target = item.get("_target") or target or {}
+    selector = active_target.get("selector") or ""
+    post_action = None
     if kind == "click":
         click_target()
         result = "Clicked " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
     elif kind == "type" or kind == "fill":
         type_target(item.get("value", ""))
         result = "Typed into " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
+        post_action = read_selector_state(selector)
     elif kind == "select":
         result = select_target(item.get("value", ""))
+        post_action = read_selector_state(selector)
     elif kind == "check" or kind == "radio":
         result = set_checked_target(True)
+        post_action = read_selector_state(selector)
     elif kind == "uncheck":
         result = set_checked_target(False)
+        post_action = read_selector_state(selector)
     elif kind == "hover":
         result = hover_target()
     elif kind == "upload_file":
@@ -1417,7 +1544,7 @@ def execute_one(item):
     else:
         raise Exception("Unsupported action: " + str(kind))
     action = previous_action
-    return result
+    return action_detail(item, result, post_action)
 
 try:
     instruction = action.get("description") or action.get("action", "action")
@@ -1427,13 +1554,15 @@ try:
     url_before = js("window.location.href")
     text_before = js("(document.body && document.body.innerText || '').slice(0, 300)")
     if kind == "batch":
-        results = []
+        action_details = []
         for item in action.get("actions", []):
-            results.append(execute_one(item))
+            action_details.append(execute_one(item))
             time.sleep(0.12)
-        action_result = "; ".join(results)
+        action_result = "; ".join([str(item.get("summary", "")) for item in action_details])
     else:
-        action_result = execute_one(action)
+        single_detail = execute_one(action)
+        action_details = [single_detail]
+        action_result = str(single_detail.get("summary", ""))
 
     for _ in range(12):
         time.sleep(0.1)
@@ -1447,6 +1576,7 @@ try:
     emit({"instruction": instruction, "status": "done", "result": action_result})
 ${buildDomSnapshotPython()}
     observation["actionResult"] = action_result
+    observation["actionDetails"] = action_details
     emit({"final": True, "ok": True, "summary": json.dumps(observation)})
 except Exception as exc:
     emit({"instruction": action.get("action", "action"), "status": "failed", "error": str(exc)})
@@ -1460,42 +1590,74 @@ ${indentPython(buildDomSnapshotPython(), '    ')}
 }
 
 export function buildVerificationScript(registry: import('../shared/types').FieldRegistry): string {
+  const registryJson = safeJsonForInjectedJs(registry);
   const verifierJs = `
 (() => {
   const results = {};
-  const registry = \${JSON.stringify(registry)};
+  const registry = ${registryJson};
   for (const field of registry) {
     let el = null;
-    for (const sel of field.selector_candidates || [field.selector]) {
+    const candidates = [field.selector, ...(field.selector_candidates || [])].filter(Boolean);
+    for (const sel of candidates) {
       try { el = document.querySelector(sel); } catch(e) {}
       if (el) break;
     }
     
     if (!el) {
-      results[field.field_id] = { found: false };
+      results[field.field_id] = {
+        found: false,
+        status: "BLOCKED",
+        rootCause: "VERIFICATION_SELECTOR_FAILURE",
+        selector: field.selector,
+        selector_candidates: field.selector_candidates || []
+      };
       continue;
     }
 
     const tag = el.tagName.toLowerCase();
-    let val = 'value' in el ? el.value : (el.isContentEditable ? el.innerText : null);
-    let checked = el.checked || el.getAttribute('aria-checked') === 'true';
-    
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    let value = null;
+    let checked = null;
     let selected_value = null;
     let selected_label = null;
+    let selected_index = null;
+    let text = null;
+    
     if (tag === 'select') {
-       const selectedOpt = Array.from(el.options || []).find(o => o.selected);
-       if (selectedOpt) {
-         selected_value = selectedOpt.value;
-         selected_label = (selectedOpt.label || selectedOpt.textContent || '').trim();
-       }
+      const selectedOpt = el.options[el.selectedIndex] || null;
+      selected_value = el.value;
+      selected_label = selectedOpt ? (selectedOpt.label || selectedOpt.textContent || "").trim() : "";
+      selected_index = el.selectedIndex;
+      value = selected_value;
+    } else if (type === "checkbox" || type === "radio" || el.getAttribute("role") === "checkbox" || el.getAttribute("role") === "radio") {
+      checked = Boolean(el.checked || el.getAttribute("aria-checked") === "true");
+      value = el.value || "";
+    } else if ("value" in el) {
+      value = el.value || "";
+    } else if (el.isContentEditable) {
+      text = el.innerText || el.textContent || "";
+      value = text;
+    } else {
+      text = el.textContent || "";
+      value = text;
     }
     
     results[field.field_id] = {
       found: true,
-      value: String(val || ''),
-      checked: Boolean(checked),
+      status: "FOUND",
+      field_id: field.field_id,
+      selector: field.selector,
+      tag,
+      type,
+      value: value === null ? null : String(value),
+      text: text === null ? null : String(text),
+      checked,
       selected_value: selected_value !== null ? String(selected_value) : null,
-      selected_label: selected_label !== null ? String(selected_label) : null
+      selected_label: selected_label !== null ? String(selected_label) : null,
+      selected_index,
+      disabled: Boolean(el.disabled || el.getAttribute("aria-disabled") === "true"),
+      readOnly: Boolean(el.readOnly),
+      visible: Boolean(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
     };
   }
   return results;
@@ -1513,10 +1675,10 @@ def emit(payload):
 try:
     results = {}
     
-    script = """\${verifierJs}"""
+    script = ${JSON.stringify(verifierJs)}
 
     results = js(script)
-    emit({"instruction": "Verify field values", "status": "done", "result": "Verified " + str(len(registry)) + " fields."})
+    emit({"instruction": "Verify field values", "status": "done", "result": "Verified " + str(${registry.length}) + " fields."})
     emit({"final": True, "ok": True, "summary": json.dumps(results)})
 
 except Exception as exc:
