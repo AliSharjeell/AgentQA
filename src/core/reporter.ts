@@ -12,7 +12,8 @@ import type {
   TaskStepStatus,
   QaValidatorResult,
   QaValidatorPatch,
-  QaIssueCategory
+  QaIssueCategory,
+  QaProbeFinding
 } from '../shared/types';
 import type { CliReport, PageObservation } from './harness';
 import type { QaTestPlan } from './planner';
@@ -42,6 +43,9 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
   const acceptanceCriteria = buildAcceptanceCriteria(input.plan, input.assertions, stats);
   const issues = buildIssues(input.actions, input.assertions, input.evidenceWarnings, input.artifacts);
   const verdict = decideVerdict(input.llmReport, input.assertions, input.actions, input.evidenceWarnings, stats);
+  const probeFinding = input.plan.taskIntent === 'DISCOVERY_PROBE'
+    ? normalizeProbeFinding(input.llmReport?.probeFinding) || probeFindingFromAssertion(input.assertions[0])
+    : undefined;
   const compactFinalState = input.observations.at(-1)?.compactFinalState;
   const objectiveMilestones = input.plan.taskIntent === 'TRANSACTION_OR_CART'
     ? input.assertions
@@ -114,6 +118,7 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
     compact_final_state: compactFinalState,
     issues,
     ...issueBuckets(issues),
+    probe_finding: probeFinding,
     actions: input.actions,
     assertions: input.assertions,
     artifacts: input.artifacts,
@@ -238,6 +243,13 @@ export function applyValidatorGating(result: QaRunResult, validatorResult: QaVal
   }
 
   if (validatorResult.verdict === 'REPORT_NEEDS_FIX') {
+    if (allRequiredAssertionsPassed(result) && !result.issues.some((issue) => issue.type === 'WEBSITE_BUG')) {
+      if (result.status === 'PASS') result.status = 'PASS_WITH_WARNINGS';
+      if (result.root_cause === 'REPORT_INCONSISTENCY') result.root_cause = undefined;
+      addReportIssue(result, validatorResult);
+      Object.assign(result, issueBuckets(result.issues));
+      return result;
+    }
     result.status = 'BLOCKED';
     result.root_cause = 'REPORT_INCONSISTENCY';
     result.issues.forEach(issue => {
@@ -268,6 +280,76 @@ export function applyValidatorGating(result: QaRunResult, validatorResult: QaVal
   }
 
   return result;
+}
+
+function normalizeProbeFinding(finding: QaProbeFinding | undefined): QaProbeFinding | undefined {
+  if (!finding?.target || !finding.outcome) return undefined;
+  return {
+    target: String(finding.target),
+    outcome: finding.outcome,
+    scope: finding.scope,
+    observedMatches: Array.isArray(finding.observedMatches) ? finding.observedMatches.map(String).slice(0, 12) : [],
+    observedAlternatives: Array.isArray(finding.observedAlternatives) ? finding.observedAlternatives.map(String).slice(0, 12) : [],
+    evidence: Array.isArray(finding.evidence) ? finding.evidence.map(String).slice(0, 12) : [],
+    summary: finding.summary
+  };
+}
+
+function probeFindingFromAssertion(assertion: QaAssertionResult | undefined): QaProbeFinding | undefined {
+  if (!assertion) return undefined;
+  const actual = String(assertion.actual ?? '');
+  const outcome = /\bnot observed\b/i.test(actual)
+    ? 'ABSENT'
+    : /\binconclusive\b|No conclusive/i.test(actual)
+      ? 'INCONCLUSIVE'
+      : /\bobserved\b/i.test(actual)
+        ? 'PRESENT'
+        : undefined;
+  if (!outcome) return undefined;
+  const target = actual
+    .replace(/\bnot observed\b.*$/i, '')
+    .replace(/\bobserved\b.*$/i, '')
+    .replace(/\binconclusive\b.*$/i, '')
+    .trim() || String(assertion.expected ?? 'requested target');
+  return {
+    target,
+    outcome,
+    scope: 'deterministic assertion',
+    observedMatches: outcome === 'PRESENT' ? [actual] : [],
+    observedAlternatives: outcome === 'ABSENT' && /Alternatives observed:/i.test(actual)
+      ? actual.replace(/^.*Alternatives observed:\s*/i, '').split(',').map((item) => item.trim()).filter(Boolean)
+      : [],
+    evidence: assertion.evidence || [],
+    summary: assertion.message
+  };
+}
+
+function allRequiredAssertionsPassed(result: QaRunResult): boolean {
+  const required = result.assertions.filter((assertion) => assertion.required !== false);
+  return required.length > 0 && required.every((assertion) =>
+    assertion.status === 'PASS' || assertion.status === 'PASS_WITH_WARNINGS' || assertion.status === 'WARNING'
+  );
+}
+
+function addReportIssue(result: QaRunResult, validatorResult: QaValidatorResult): void {
+  const issue: QaIssue = {
+    id: `ISSUE-${String(result.issues.length + 1).padStart(3, '0')}`,
+    title: 'Report Quality Warning',
+    type: 'REPORT_INCONSISTENCY',
+    category: 'REPORT_ISSUE',
+    severity: validatorResult.confidence === 'HIGH' ? 'MEDIUM' : 'LOW',
+    status: 'WARNING',
+    expected: 'Report narrative is internally consistent with deterministic assertions.',
+    actual: validatorResult.summary,
+    affected_elements: [],
+    evidence: {
+      screenshots: defaultScreenshotEvidence(result),
+      dom_snapshot: result.artifacts.dom_after,
+      action_trace: result.artifacts.action_trace
+    },
+    recommendation: 'Review the report-quality warning, but keep the deterministic assertion result as the primary outcome.'
+  };
+  result.issues.push(issue);
 }
 
 function applySafePatch(result: QaRunResult, patch: QaValidatorPatch) {
@@ -331,13 +413,14 @@ export function categoryForRootCause(rootCause: QaRootCause | undefined): QaIssu
   }
 }
 
-function issueBuckets(issues: QaIssue[]): Pick<QaRunResult, 'product_issues' | 'agent_issues' | 'verifier_issues' | 'test_data_issues' | 'environment_issues'> {
+function issueBuckets(issues: QaIssue[]): Pick<QaRunResult, 'product_issues' | 'agent_issues' | 'verifier_issues' | 'test_data_issues' | 'environment_issues' | 'report_issues'> {
   return {
     product_issues: issues.filter((issue) => issue.category === 'PRODUCT_ISSUE'),
     agent_issues: issues.filter((issue) => issue.category === 'AGENT_ISSUE'),
     verifier_issues: issues.filter((issue) => issue.category === 'VERIFIER_ISSUE' || issue.type === 'VERIFIER_RUNTIME_ERROR'),
     test_data_issues: issues.filter((issue) => issue.category === 'TEST_DATA_ISSUE'),
-    environment_issues: issues.filter((issue) => issue.category === 'ENVIRONMENT_ISSUE')
+    environment_issues: issues.filter((issue) => issue.category === 'ENVIRONMENT_ISSUE'),
+    report_issues: issues.filter((issue) => issue.category === 'REPORT_ISSUE')
   };
 }
 
@@ -672,10 +755,6 @@ function decideVerdict(
   const blockedAction = actions.find((action) => action.action_result === 'BLOCKED' || action.verification?.status === 'BLOCKED');
   const hasWarnings = assertions.some((assertion) => assertion.status === 'WARNING') || evidenceWarnings.length || stats.console_errors > 0 || stats.network_errors > 0 || Boolean(blockedAction);
   const criticalNetworkErrors = stats.critical_network_errors ?? 0;
-  
-  if (criticalNetworkErrors > 0) {
-    return { status: 'BLOCKED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
-  }
 
   const allReqPassed = assertions.filter(a => a.required !== false).every(a => a.status === 'PASS' || a.status === 'PASS_WITH_WARNINGS' || a.status === 'WARNING');
   if (allReqPassed && assertions.length > 0) {
@@ -683,6 +762,10 @@ function decideVerdict(
       return { status: 'PASS_WITH_WARNINGS', rootCause: undefined, severity: 'MEDIUM' };
     }
     return { status: 'PASS', rootCause: undefined, severity: 'INFO' };
+  }
+
+  if (criticalNetworkErrors > 0) {
+    return { status: 'BLOCKED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
   }
 
   if (blockedAction) return { status: 'BLOCKED', rootCause: blockedAction.verification?.rootCause || 'AGENT_LIMITATION', severity: 'HIGH' };
@@ -775,6 +858,16 @@ function buildSummary(
   providerWarnings: string[] = []
 ): string {
   if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') {
+    if (plan.taskIntent === 'DISCOVERY_PROBE') {
+      const assertion = assertions[0];
+      const warningText = status === 'PASS_WITH_WARNINGS'
+        ? buildPassWarningMessages(plan, stats, evidenceWarnings).join(' ')
+        : '';
+      return [
+        assertion?.message || `Availability probe completed: ${String(assertion?.actual ?? 'answered with evidence')}.`,
+        warningText ? `Warnings: ${warningText}` : ''
+      ].filter(Boolean).join(' ');
+    }
     if (plan.testId === 'TC-FORM-001') {
       const warnings = buildPassWarningMessages(plan, stats, evidenceWarnings);
       const allWarnings = [...warnings, ...providerWarnings];
@@ -835,6 +928,8 @@ function buildPassWarningMessages(plan: QaTestPlan, stats: ExtendedQaRunStats, e
   }
   if (stats.network_errors > 0 && (stats.critical_network_errors ?? 0) === 0) {
     warnings.push(`${stats.network_errors} non-critical network request${stats.network_errors === 1 ? '' : 's'} failed.`);
+  } else if (stats.network_errors > 0) {
+    warnings.push(`${stats.network_errors} network request${stats.network_errors === 1 ? '' : 's'} failed, but required assertions were verified.`);
   }
   if (stats.console_errors > 0) {
     warnings.push(`${stats.console_errors} console error${stats.console_errors === 1 ? '' : 's'} were captured.`);
@@ -870,7 +965,7 @@ function buildReproSteps(actions: QaRunAction[], llmReport: CliReport | null | u
 }
 
 function recommendationFor(rootCause: QaRootCause | undefined, status: QaVerdict): string {
-  if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') return 'No product fix required. Optional: add submit-validation testing on pages that include a submit button.';
+  if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') return 'No product fix required.';
   if (rootCause === 'WEBSITE_BUG') return 'Fix the application behavior that contradicted the expected verified state, then rerun the QA test.';
   if (rootCause === 'AGENT_LIMITATION') return 'Improve automation support or selector strategy, then rerun. Do not treat the blocked run as a website bug.';
   if (rootCause === 'NO_FIELDS_FOUND') return 'Rerun on a page or step with editable controls, or change the task if no form fields are expected.';

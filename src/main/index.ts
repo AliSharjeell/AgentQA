@@ -790,7 +790,7 @@ function generateMarkdownReport(report: QaReport): string {
 app.commandLine.appendSwitch("remote-debugging-port", String(PREVIEW_DEBUG_PORT));
 
 app.whenReady().then(() => {
-  nativeTheme.themeSource = 'light';
+  nativeTheme.themeSource = "dark";
   app.setAppUserModelId("com.agentqa.app");
   Menu.setApplicationMenu(null);
   session.defaultSession.setCertificateVerifyProc(() => ({ action: "grant" }));

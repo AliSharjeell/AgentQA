@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import * as fs from 'node:fs';
-import type { AgentExecutorKind, AgentRunMode, AppSettings, ProviderRetryEvent } from '../shared/types';
+import type { AgentExecutorKind, AgentRunMode, AppSettings, ProviderRetryEvent, QaProbeFinding } from '../shared/types';
 import type { QaRunAction, QaRunResult } from '../shared/types';
 import { callForScript } from './api';
 import {
@@ -18,7 +18,7 @@ import { createTestPlan } from './planner';
 import { buildQaRunResult, applyValidatorGating, applyVerifierRuntimeErrorGate, applyVerifierRuntimeWarning, writeQaReportFiles } from './reporter';
 import { verifyAction, verifyPlanAssertions } from './verification';
 import { runValidatorAudit } from './validator';
-import { detectGoalCompletion, elementRegistryForObservation, resolveInitialObservationReadiness } from './intent';
+import { detectGoalCompletion, detectProbeTask, elementRegistryForObservation, resolveInitialObservationReadiness } from './intent';
 import {
   buildCompactFinalState,
   buildObjectiveProgress,
@@ -387,6 +387,7 @@ function makeReport(input: {
   history: AgentHistoryEntry[];
   faults: QaFault[];
   evidence?: string[];
+  probeFinding?: QaProbeFinding;
   warnings?: string[];
   consoleErrors?: string[];
 }): CliReport {
@@ -402,11 +403,32 @@ function makeReport(input: {
     warnings,
     stepsExecuted: input.history.map((entry) => `${entry.step}. ${entry.action} -> ${entry.status}: ${entry.result}`),
     evidence: input.evidence?.length ? input.evidence : [input.summary],
+    probeFinding: input.probeFinding,
     finalUrl: input.finalUrl,
     screenshots: [],
     consoleErrors: input.consoleErrors || [],
     fixRecommendations: confirmedBugs.length ? ['Review the confirmed fault log and fix the affected user flow.'] : [],
     faultLog: input.faults
+  };
+}
+
+function probeFindingFromCompletion(task: string, completion: ReturnType<typeof detectGoalCompletion>): QaProbeFinding | undefined {
+  const probe = detectProbeTask(task);
+  if (!probe.isProbe) return undefined;
+  const actual = String(completion.actual ?? '');
+  const outcome = /\b(not observed|absent|missing|unavailable|not found)\b/i.test(actual)
+    ? 'ABSENT'
+    : /\b(inconclusive|no conclusive)\b/i.test(actual)
+      ? 'INCONCLUSIVE'
+      : 'PRESENT';
+  return {
+    target: probe.target || String(completion.expected || 'requested target'),
+    outcome,
+    scope: 'deterministic page observation',
+    observedMatches: outcome === 'PRESENT' ? [actual] : [],
+    observedAlternatives: outcome === 'ABSENT' ? actual.replace(/^.*Alternatives observed:\s*/i, '').split(',').map((item) => item.trim()).filter(Boolean) : [],
+    evidence: completion.evidence,
+    summary: completion.message || actual
   };
 }
 
@@ -1109,6 +1131,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       history,
       faults,
       evidence: initialCompletion.evidence,
+      probeFinding: probeFindingFromCompletion(prompt, initialCompletion),
       consoleErrors: observation.consoleErrors
     });
     return finishWithReport(report, 'Initial deterministic completion reached.', currentUrl);
@@ -1762,6 +1785,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
           history,
           faults,
           evidence: completion.evidence,
+          probeFinding: probeFindingFromCompletion(prompt, completion),
           consoleErrors: observation.consoleErrors
         });
         return finishWithReport(report, 'Deterministic completion reached.', currentUrl);

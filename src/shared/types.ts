@@ -46,6 +46,7 @@ export type AgentExecutorKind = "registry-app" | "standard-cdp" | "browser-use" 
 export type QaTaskIntent =
   | "FORM_INTERACTION"
   | "AUTH_FLOW"
+  | "DISCOVERY_PROBE"
   | "SEARCH_OR_DISCOVERY"
   | "NAVIGATION"
   | "TRANSACTION_OR_CART"
@@ -293,6 +294,18 @@ export interface QaVerificationResult {
   message?: string;
 }
 
+export type QaProbeOutcome = "PRESENT" | "ABSENT" | "INCONCLUSIVE";
+
+export interface QaProbeFinding {
+  target: string;
+  outcome: QaProbeOutcome;
+  scope?: string;
+  observedMatches?: string[];
+  observedAlternatives?: string[];
+  evidence: string[];
+  summary?: string;
+}
+
 export interface QaRunAction {
   action_id: string;
   action: string;
@@ -461,6 +474,8 @@ export interface QaRunResult {
   verifier_issues?: QaIssue[];
   test_data_issues?: QaIssue[];
   environment_issues?: QaIssue[];
+  report_issues?: QaIssue[];
+  probe_finding?: QaProbeFinding;
   actions: QaRunAction[];
   assertions: QaAssertionResult[];
   artifacts: QaArtifactManifest;

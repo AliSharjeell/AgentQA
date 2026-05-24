@@ -14,6 +14,7 @@ export type QaAssertionKind =
   | 'no_horizontal_overflow'
   | 'accessibility_basic'
   | 'objective_verified'
+  | 'discovery_probe'
   | 'equals'
   | 'contains'
   | 'not_default'
@@ -60,6 +61,7 @@ export function createTestPlan(input: {
 
   const intent = detectTaskIntent(input.prompt).intent;
   if (intent === 'FORM_INTERACTION') return formInteractionPlan(input.prompt);
+  if (intent === 'DISCOVERY_PROBE') return discoveryProbePlan(input.prompt);
   if (intent === 'AUTH_FLOW') return authFlowPlan(input.prompt);
   if (intent === 'SEARCH_OR_DISCOVERY') return searchDiscoveryPlan(input.prompt);
   if (intent === 'NAVIGATION') return navigationPlan(input.prompt);
@@ -108,6 +110,26 @@ function formInteractionPlan(task: string): QaTestPlan {
     ],
     assertions,
     edgeCases: ['If no editable controls exist for a form-only task, block with NO_FIELDS_FOUND.', 'Do not mark pass unless field values are verified.']
+  };
+}
+
+function discoveryProbePlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [{
+    id: 'ASSERT-001',
+    description: 'Requested availability or presence question is answered with evidence',
+    kind: 'discovery_probe',
+    expected: task,
+    required: true,
+    acceptanceCriteriaId: 'AC-001'
+  }];
+  return {
+    testId: 'TC-PROBE-001',
+    title: 'Answer requested availability question',
+    task,
+    taskIntent: 'DISCOVERY_PROBE',
+    acceptanceCriteria: [criterion('AC-001', 'Presence, absence, or inconclusive state is reported with evidence', assertions)],
+    assertions,
+    edgeCases: ['Absence is a successful negative finding for discovery questions, but a failure when the task states the target should exist.']
   };
 }
 

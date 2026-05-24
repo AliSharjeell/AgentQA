@@ -1,4 +1,4 @@
-import type { QaRootCause, QaRunAction, QaTaskIntent, QaVerdict } from '../shared/types';
+import type { QaProbeFinding, QaRootCause, QaRunAction, QaTaskIntent, QaVerdict } from '../shared/types';
 import type { CliReport, PageObservation } from './harness';
 
 export interface TaskIntentAnalysis {
@@ -24,11 +24,17 @@ export interface GoalCompletionResult {
   message?: string;
 }
 
+export interface ProbeTaskAnalysis {
+  isProbe: boolean;
+  isExpectation: boolean;
+  target: string;
+}
+
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'check', 'confirm', 'do',
   'ensure', 'for', 'from', 'go', 'in', 'into', 'is', 'it', 'its', 'me', 'of', 'on',
   'open', 'page', 'please', 'show', 'site', 'that', 'the', 'this', 'to', 'use',
-  'user', 'verify', 'with'
+  'user', 'verify', 'with', 'whether', 'if', 'see'
 ]);
 
 function normalize(value: string): string {
@@ -39,8 +45,68 @@ function hasAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+export function detectProbeTask(task: string): ProbeTaskAnalysis {
+  const text = normalize(task);
+  const exploratory = hasAny(text, [
+    /\b(can|could|would) you\b.*\b(see|check|tell|find out|look)\b.*\b(if|whether)\b/,
+    /\b(see|check|tell|find out|look)\b.*\b(if|whether)\b/,
+    /\b(does|do|is|are|has|have)\b.+\b(available|present|visible|integrated|supported|support|exist|exists|enabled|included)\b/,
+    /\b(is|are)\b.+\b(on|in)\b.+\b(site|page|app|modal|menu|form)\b/
+  ]);
+  const expectation = hasAny(text, [
+    /\b(ensure|verify|confirm|validate|assert|test)\b.+\b(exists?|available|present|visible|integrated|supported|enabled|included)\b/,
+    /\b(should|must|needs? to|expected to|supposed to)\b.+\b(exists?|be available|be present|be visible|support|include|have)\b/
+  ]);
+  const isProbe = exploratory || expectation;
+  return {
+    isProbe,
+    isExpectation: expectation,
+    target: isProbe ? extractProbeTarget(task) : ''
+  };
+}
+
+function extractProbeTarget(task: string): string {
+  const normalized = normalize(task);
+  const quoted = Array.from(task.matchAll(/"([^"]+)"|'([^']+)'/g))
+    .map((match) => normalize(match[1] || match[2] || ''))
+    .find(Boolean);
+  if (quoted) return quoted;
+
+  const patterns = [
+    /\b(?:does|do|has|have)\s+(?:this|the\s+\w+|site|page|app|website)\s+(?:support|have|include|offer)\s+(.+?)(?:\s+(?:available|present|visible|integrated|supported|enabled|included|on|in)\b|$)/,
+    /\b(?:is|are)\s+(.+?)\s+(?:available|present|visible|integrated|supported|enabled|included|on|in)\b/,
+    /\b(?:if|whether)\s+(.+?)(?:\s+(?:is|are|has|have|exists?|available|present|visible|integrated|supported|enabled|included|on|in)\b|$)/,
+    /\b(?:does|do|is|are|has|have)\s+(.+?)(?:\s+(?:available|present|visible|integrated|supported|support|exists?|enabled|included|on|in)\b|$)/,
+    /\b(?:ensure|verify|confirm|validate|assert|test)\s+(.+?)(?:\s+(?:exists?|is|are|available|present|visible|integrated|supported|enabled|included)\b|$)/
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const candidate = cleanProbeTarget(match?.[1] || '');
+    if (candidate) return candidate;
+  }
+  return cleanProbeTarget(normalized);
+}
+
+function cleanProbeTarget(value: string): string {
+  const cleaned = value
+    .replace(/\b(can|could|would|you|please|see|check|tell|find|out|look|whether|if|does|do|is|are|has|have|site|page|app|website|modal|menu|form)\b/g, ' ')
+    .replace(/\b(exists?|available|present|visible|integrated|supported|support|enabled|included|there|the)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.split(' ').filter((token) => token.length > 1 && !STOP_WORDS.has(token)).join(' ').slice(0, 80);
+}
+
 export function detectTaskIntent(task: string): TaskIntentAnalysis {
   const text = normalize(task);
+  const probe = detectProbeTask(task);
+  if (probe.isProbe) {
+    return {
+      intent: 'DISCOVERY_PROBE',
+      confidence: probe.isExpectation ? 0.72 : 0.82,
+      requiresFieldsAtStart: false,
+      verificationStyle: 'Answer whether the requested target is present, absent, or inconclusive from scoped DOM/page evidence.'
+    };
+  }
   const wantsForm = hasAny(text, [
     /\bfill\b/, /\bform\b/, /\bfields?\b/, /\binputs?\b/, /\btextarea\b/, /\bselect\b/
   ]);
@@ -220,6 +286,109 @@ function reportClaimsPass(llmReport: CliReport | null | undefined): boolean {
   return llmReport?.result === 'PASS' && Boolean(llmReport.evidence?.length || llmReport.stepsExecuted?.length);
 }
 
+function formatProbeActual(finding: QaProbeFinding): string {
+  const target = finding.target || 'requested target';
+  const alternatives = finding.observedAlternatives?.length
+    ? ` Alternatives observed: ${finding.observedAlternatives.join(', ')}.`
+    : '';
+  if (finding.outcome === 'PRESENT') return `${target} observed${finding.observedMatches?.length ? `: ${finding.observedMatches.join(', ')}` : ''}`;
+  if (finding.outcome === 'ABSENT') return `${target} not observed.${alternatives}`;
+  return `${target} inconclusive`;
+}
+
+function visibleProbeTexts(observation: PageObservation): string[] {
+  const compact = observation.compactFinalState;
+  const compactTexts = compact
+    ? [
+        compact.pageTextExcerpt,
+        ...compact.visibleButtons.map((item) => `${item.label} ${item.text || ''}`),
+        ...compact.visibleLinks.map((item) => `${item.label} ${item.text || ''}`),
+        ...compact.visibleOptions.map((item) => `${item.label} ${item.text || ''}`),
+        ...compact.candidateActions.map((item) => `${item.label} ${item.text || ''}`),
+        ...compact.visibleHeadings,
+        ...compact.errorMessages,
+        ...compact.selectedOptions,
+        ...compact.disabledOptions
+      ]
+    : [];
+  const registryTexts = elementRegistryForObservation(observation).map((element) =>
+    `${element.description || ''} ${element.text || ''} ${element.value || ''} ${element.href || ''} ${element.role || ''} ${element.type || ''}`
+  );
+  return [observation.pageText, ...compactTexts, ...registryTexts].filter(Boolean);
+}
+
+function inferProbeFinding(input: {
+  task: string;
+  observation: PageObservation;
+  llmReport?: CliReport | null;
+  evidence: string[];
+}): QaProbeFinding | null {
+  const probe = detectProbeTask(input.task);
+  if (!probe.isProbe) return null;
+  const reported = input.llmReport?.probeFinding;
+  if (reported?.outcome && reported.target && Array.isArray(reported.evidence)) {
+    return {
+      target: reported.target,
+      outcome: reported.outcome,
+      scope: reported.scope,
+      observedMatches: reported.observedMatches || [],
+      observedAlternatives: reported.observedAlternatives || [],
+      evidence: reported.evidence,
+      summary: reported.summary
+    };
+  }
+
+  const target = probe.target || extractGoalKeywords(input.task).join(' ') || 'requested target';
+  const targetText = normalize(target);
+  const evidenceText = [
+    ...input.evidence,
+    ...(input.llmReport?.evidence || []),
+    ...(input.llmReport?.stepsExecuted || [])
+  ].join(' ');
+  const visibleTexts = visibleProbeTexts(input.observation);
+  const visibleText = visibleTexts.join(' ');
+  const combined = normalize(`${evidenceText} ${visibleText}`);
+  const exactTargetSeen = Boolean(targetText && combined.includes(targetText));
+  const negativeEvidence = new RegExp(`\\b(no|not|without|absent|missing|unavailable|not observed|not found)\\b.{0,80}\\b${escapeRegExp(targetText)}\\b|\\b${escapeRegExp(targetText)}\\b.{0,80}\\b(no|not|absent|missing|unavailable|not observed|not found)\\b`, 'i')
+    .test(`${evidenceText} ${visibleText}`);
+
+  if (negativeEvidence) {
+    return {
+      target,
+      outcome: 'ABSENT',
+      scope: 'checked visible page state and report evidence',
+      observedAlternatives: extractObservedAlternatives(`${evidenceText} ${visibleText}`, target),
+      evidence: compactEvidence([input.llmReport?.evidence?.[0], input.evidence[0], visibleTexts.find((text) => normalize(text).includes('continue with') || normalize(text).includes('export') || normalize(text).includes('available'))]),
+      summary: `${target} was not observed in the checked scope.`
+    };
+  }
+
+  if (exactTargetSeen) {
+    const match = visibleTexts.find((text) => normalize(text).includes(targetText)) || input.llmReport?.evidence?.find((text) => normalize(text).includes(targetText));
+    return {
+      target,
+      outcome: 'PRESENT',
+      scope: 'checked visible page state and report evidence',
+      observedMatches: match ? [match.replace(/\s+/g, ' ').trim().slice(0, 160)] : [target],
+      evidence: compactEvidence([match, input.evidence[0], input.llmReport?.evidence?.[0]]),
+      summary: `${target} was observed in the checked scope.`
+    };
+  }
+
+  return null;
+}
+
+function extractObservedAlternatives(text: string, target: string): string[] {
+  const alternatives = Array.from(text.matchAll(/\b(?:Continue with|Sign in with|Log in with|Export(?: as)?|Download(?: as)?|Available options?:?)\s+([A-Za-z0-9 /+._-]{2,48})/gi))
+    .map((match) => match[1].replace(/\s+/g, ' ').trim())
+    .filter((value) => value && !normalize(value).includes(normalize(target)));
+  return [...new Set(alternatives)].slice(0, 8);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function detectGoalCompletion(input: {
   task: string;
   intent?: QaTaskIntent;
@@ -287,6 +456,32 @@ export function detectGoalCompletion(input: {
       actual: passed ? true : 'Form actions were not fully verified',
       evidence: baseEvidence,
       message: passed ? undefined : 'Field interaction did not reach a deterministically verified final state.'
+    };
+  }
+
+  if (intent === 'DISCOVERY_PROBE') {
+    const probe = detectProbeTask(input.task);
+    const finding = inferProbeFinding(input);
+    if (finding && finding.outcome !== 'INCONCLUSIVE') {
+      const absenceFailedExpectation = probe.isExpectation && finding.outcome === 'ABSENT';
+      return {
+        passed: !absenceFailedExpectation,
+        status: absenceFailedExpectation ? 'FAIL' : 'PASS',
+        rootCause: absenceFailedExpectation ? 'WEBSITE_BUG' : undefined,
+        expected: probe.isExpectation ? `${finding.target} is present` : `${finding.target} availability is answered`,
+        actual: formatProbeActual(finding),
+        evidence: compactEvidence([finding.summary, ...finding.evidence, ...baseEvidence]),
+        message: finding.summary
+      };
+    }
+    return {
+      passed: false,
+      status: 'BLOCKED',
+      rootCause: 'GOAL_NOT_REACHED',
+      expected: probe.target ? `${probe.target} availability answered from scoped evidence` : 'Availability question answered from scoped evidence',
+      actual: finding ? formatProbeActual(finding) : 'No conclusive present/absent finding',
+      evidence: baseEvidence,
+      message: 'The final state did not prove whether the requested target was present or absent.'
     };
   }
 

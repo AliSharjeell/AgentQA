@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import type { ElementRegistry, ElementRegistryEntry, FieldRegistry, FieldRegistryEntry, QaCompactFinalState, QaNetworkErrorDetail } from '../shared/types';
+import type { ElementRegistry, ElementRegistryEntry, FieldRegistry, FieldRegistryEntry, QaCompactFinalState, QaNetworkErrorDetail, QaProbeFinding } from '../shared/types';
 
 export function safeJsonForInjectedJs(value: unknown): string {
   return JSON.stringify(value)
@@ -59,6 +59,7 @@ export interface CliReport {
   warnings: string[];
   stepsExecuted: string[];
   evidence: string[];
+  probeFinding?: QaProbeFinding;
   finalUrl: string;
   screenshots: string[];
   consoleErrors: string[];

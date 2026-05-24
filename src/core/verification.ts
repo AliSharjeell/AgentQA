@@ -379,6 +379,8 @@ function verifyPlanAssertion(
       return verifyAccessibilityBasicAssertion(spec, observation);
     case 'objective_verified':
       return verifyObjectiveAssertion(spec, observation, llmReport, evidence, actions);
+    case 'discovery_probe':
+      return verifyObjectiveAssertion(spec, observation, llmReport, evidence, actions);
     default:
       return blockedAssertion(spec, 'Unsupported assertion kind.', 'AGENT_LIMITATION');
   }

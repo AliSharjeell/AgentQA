@@ -35,7 +35,6 @@ import type {
   QaVerdict,
   BrowserState,
   AppProgressEvent,
-  AgentRunMode,
   AppSettings
 } from "../../shared/types";
 
@@ -253,8 +252,6 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
   const [showUrlHint, setShowUrlHint] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [creating, setCreating] = useState(false);
-  const [mode, setMode] = useState<AgentRunMode>("standard");
-  const [allowEscalation, setAllowEscalation] = useState(false);
   const [templates, setTemplates] = useState<QaTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
 
@@ -279,9 +276,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
       const task = await window.qaApi.createTask({
         name: inputName.trim(),
         targetUrl,
-        templateId: selectedTemplate?.id,
-        mode,
-        allowEscalation
+        templateId: selectedTemplate?.id
       });
       setTasks((prev) => [task, ...prev]);
       onSelectTask(task.id);
@@ -290,7 +285,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     } finally {
       setCreating(false);
     }
-  }, [inputName, browserUrl, mode, allowEscalation, onSelectTask, onRefresh, setTasks, templateId, templates]);
+  }, [inputName, browserUrl, onSelectTask, onRefresh, setTasks, templateId, templates]);
 
   const handleTemplateChange = useCallback((value: string) => {
     setTemplateId(value);
@@ -344,27 +339,6 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
             <option key={template.id} value={template.id}>{template.title}</option>
           ))}
         </select>
-        <div className="grid grid-cols-[1fr_auto] gap-2 px-1">
-          <select
-            className="h-8 rounded-lg border border-white/5 bg-white/5 px-2 text-[11px] text-zinc-300 outline-none focus:border-white/10"
-            value={mode}
-            onChange={(e) => setMode(e.target.value as AgentRunMode)}
-            title="Automation Mode"
-          >
-            <option value="standard">Standard</option>
-            <option value="browser-use">Browser-use</option>
-            <option value="advanced">Advanced</option>
-          </select>
-          <label className="flex h-8 items-center gap-1.5 rounded-lg border border-white/5 bg-white/5 px-2 text-[10px] text-zinc-400">
-            <input
-              type="checkbox"
-              checked={allowEscalation}
-              onChange={(e) => setAllowEscalation(e.target.checked)}
-              className="rounded border-white/10 bg-white/5 accent-zinc-500"
-            />
-            Escalate
-          </label>
-        </div>
         <div className="relative flex items-center">
           <input
             className={`h-9 w-full rounded-full border border-white/5 bg-white/5 pl-4 pr-10 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/10${urlError ? " border-red-500/50" : ""}`}
@@ -422,16 +396,13 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
       onClick={onClick}
     >
       {active ? (
-        <div className="flex flex-col px-3 pt-3 pb-2 space-y-2.5">
+        <div className="flex flex-col px-3 pt-3 pb-2 space-y-2.5" title="Collapse task">
           {/* Full width Prompt & URL */}
-          <div
-            className="w-full space-y-1 select-text cursor-default"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="break-words whitespace-pre-wrap select-text cursor-text text-xs font-medium leading-relaxed">
+          <div className="w-full space-y-1 cursor-pointer select-none">
+            <p className="break-words whitespace-pre-wrap text-xs font-medium leading-relaxed">
               {task.name}
             </p>
-            <p className="break-all whitespace-pre-wrap select-text cursor-text text-[10px] text-zinc-400 leading-normal">
+            <p className="break-all whitespace-pre-wrap text-[10px] text-zinc-400 leading-normal">
               {task.targetUrl}
             </p>
           </div>
@@ -480,7 +451,7 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
           onClick={(e) => e.stopPropagation()}
         >
           {/* Status and Controls at the top of the expanded tab */}
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+          <div className="flex cursor-pointer select-none items-center justify-between border-b border-white/5 pb-2" onClick={onClick} title="Collapse task">
             <div className="flex items-center gap-2">
               <StatusIcon status={task.status} size={14} />
               <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
@@ -668,11 +639,12 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
   const status = (report.status || result?.status || "BLOCKED") as QaVerdict;
   const screenshotPaths = report.screenshots || [];
   const productIssues = result?.product_issues || (report.issues || []).filter((issue) => issue.category === "PRODUCT_ISSUE");
-  const agentIssues = [
+  const runIssues = [
     ...(result?.agent_issues || []),
     ...(result?.verifier_issues || []),
     ...(result?.test_data_issues || []),
-    ...(result?.environment_issues || [])
+    ...(result?.environment_issues || []),
+    ...(result?.report_issues || [])
   ];
   const confidence = result?.validator_review?.confidence || (status === "PASS" || status === "PASS_WITH_WARNINGS" ? "HIGH" : "MEDIUM");
 
@@ -714,7 +686,7 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
       <div className="qa-tabbar">
         <TabButton active={tab === "summary"} icon={<FileText size={11} />} label="Summary" onClick={() => setTab("summary")} />
         <TabButton active={tab === "product"} icon={<ShieldAlert size={11} />} label="Product Issues" onClick={() => setTab("product")} />
-        <TabButton active={tab === "agent"} icon={<AlertCircle size={11} />} label="Agent Issues" onClick={() => setTab("agent")} />
+        <TabButton active={tab === "agent"} icon={<AlertCircle size={11} />} label="Run Issues" onClick={() => setTab("agent")} />
         <TabButton active={tab === "assertions"} icon={<CheckCircle2 size={11} />} label="Assertions" onClick={() => setTab("assertions")} />
         <TabButton active={tab === "steps"} icon={<ListChecks size={11} />} label="Steps" onClick={() => setTab("steps")} />
         <TabButton active={tab === "screenshots"} icon={<Image size={11} />} label="Shots" onClick={() => setTab("screenshots")} />
@@ -752,10 +724,10 @@ function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX
 
       {tab === "agent" && (
         <div className="space-y-2">
-          {agentIssues.length === 0 ? (
-            <p className="text-[11px] text-zinc-500">No AgentQA, verifier, test data, or environment issues found.</p>
+          {runIssues.length === 0 ? (
+            <p className="text-[11px] text-zinc-500">No AgentQA, verifier, report, test data, or environment issues found.</p>
           ) : (
-            agentIssues.map((issue) => <IssueCard key={issue.id} issue={issue} />)
+            runIssues.map((issue) => <IssueCard key={issue.id} issue={issue} />)
           )}
         </div>
       )}

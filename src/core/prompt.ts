@@ -227,6 +227,7 @@ ${getCoreBehaviourRules()}
 
 QA result classification:
 - PASS: the task objective is completed and verified with DOM/page evidence, and no confirmed site bug blocks the scenario.
+- For discovery/probe tasks such as "can you see if", "check whether", "does this have/support", or "is X available", PASS means you answered with evidence. A proven "absent/not observed" finding is a successful answer unless the user explicitly said X should exist.
 - FAIL: a genuine website/app bug is confirmed with evidence.
 - AGENT_FAILED: automation cannot complete or prove the result, or you are blocked/stuck without confirmed site bug evidence.
 - INFRA_FAILED: browser, CDP, harness, network startup, or tool failure.
@@ -277,6 +278,7 @@ Important:
 - Never treat a missing final CTA as a website bug until required prerequisites are resolved and deterministic verification confirms the final action is unavailable.
 - Keep a QA fault log. A failed automation action is not automatically a site bug.
 - PASS must cite exact DOM/cart evidence when the task requires exact product names or cart contents.
+- For discovery/probe tasks, finish with a structured probeFinding. Do not treat generic keywords anywhere on the page as proof; cite the relevant scoped UI, text, menu, modal, or checked surface. If the target is absent but alternatives are visible, list those alternatives.
 - If the task cannot progress because the needed UI affordance is missing, report AGENT_FAILED with a clear REQUIRED_AFFORDANCE_NOT_FOUND reason.
 - ${visionRules}
 
@@ -325,6 +327,15 @@ When finishing, activePhase.action must be "finish_task" or "fail_task" and repo
   "warnings": ["warnings and limitations"],
   "stepsExecuted": ["important executed steps"],
   "evidence": ["specific DOM/page evidence for the result"],
+  "probeFinding": {
+    "target": "the checked feature/capability/content/integration, only for discovery/probe tasks",
+    "outcome": "PRESENT | ABSENT | INCONCLUSIVE",
+    "scope": "where you checked, such as login modal, pricing page, export menu, settings panel, page text, API docs",
+    "observedMatches": ["exact matching labels/text if present"],
+    "observedAlternatives": ["nearby alternatives/options when the target is absent"],
+    "evidence": ["specific scoped evidence supporting the finding"],
+    "summary": "one sentence answering the user's question"
+  },
   "finalUrl": "${input.currentUrl}",
   "screenshots": [],
   "consoleErrors": [],

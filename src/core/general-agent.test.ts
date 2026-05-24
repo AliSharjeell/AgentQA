@@ -110,6 +110,118 @@ describe('general QA agent behavior', () => {
     expect(assertions[0].status).toBe('PASS');
   });
 
+  it('answers a discovery probe when the requested capability is absent', () => {
+    const plan = createTestPlan({ prompt: 'can u see if x auth is integrated in the site', targetUrl: 'https://example.test' });
+    const assertions = verifyPlanAssertions({
+      plan,
+      observation: observation({
+        pageText: 'Log in to your account Continue with Google Continue with GitHub Continue with Apple Continue with email Community X / Twitter',
+        elementRegistry: [
+          element({ id: 'google', type: 'button', tag: 'button', description: 'Continue with Google', text: 'Continue with Google' }),
+          element({ id: 'github', type: 'button', tag: 'button', description: 'Continue with GitHub', text: 'Continue with GitHub' }),
+          element({ id: 'apple', type: 'button', tag: 'button', description: 'Continue with Apple', text: 'Continue with Apple' }),
+          element({ id: 'email', type: 'button', tag: 'button', description: 'Continue with email', text: 'Continue with email' })
+        ]
+      }),
+      actions: [successAction('click', 'Log in')],
+      evidence: ['Login modal was checked.'],
+      llmReport: {
+        result: 'PASS',
+        scenario: 'can u see if x auth is integrated in the site',
+        confirmedBugs: [],
+        warnings: [],
+        stepsExecuted: ['Opened login modal and checked auth choices'],
+        evidence: ['Visible auth choices are Continue with Google, Continue with GitHub, Continue with Apple, and Continue with email. No X/Twitter auth option is present.'],
+        probeFinding: {
+          target: 'x auth',
+          outcome: 'ABSENT',
+          scope: 'login modal',
+          observedMatches: [],
+          observedAlternatives: ['Google', 'GitHub', 'Apple', 'email'],
+          evidence: ['Login modal lists Google, GitHub, Apple, and email, with no X/Twitter option.'],
+          summary: 'X/Twitter auth was not observed in the login modal.'
+        },
+        finalUrl: 'https://example.test',
+        screenshots: [],
+        consoleErrors: [],
+        fixRecommendations: []
+      }
+    });
+
+    expect(plan.taskIntent).toBe('DISCOVERY_PROBE');
+    expect(assertions[0].status).toBe('PASS');
+    expect(assertions[0].actual).toContain('not observed');
+    expect(assertions[0].message).toContain('X/Twitter auth was not observed');
+  });
+
+  it('answers a discovery probe when the requested capability is present', () => {
+    const plan = createTestPlan({ prompt: 'check whether dark mode is available', targetUrl: 'https://example.test' });
+    const assertions = verifyPlanAssertions({
+      plan,
+      observation: observation({
+        pageText: 'Settings Appearance Dark mode',
+        elementRegistry: [element({ id: 'dark-mode', type: 'button', tag: 'button', description: 'Dark mode', text: 'Dark mode' })]
+      }),
+      actions: [],
+      evidence: [],
+      llmReport: null
+    });
+
+    expect(plan.taskIntent).toBe('DISCOVERY_PROBE');
+    expect(assertions[0].status).toBe('PASS');
+    expect(assertions[0].actual).toContain('observed');
+  });
+
+  it('blocks a discovery probe when neither presence nor absence is proven', () => {
+    const plan = createTestPlan({ prompt: 'does this support CSV export', targetUrl: 'https://example.test' });
+    const assertions = verifyPlanAssertions({
+      plan,
+      observation: observation({ pageText: 'Dashboard Home Reports' }),
+      actions: [],
+      evidence: [],
+      llmReport: null
+    });
+
+    expect(plan.taskIntent).toBe('DISCOVERY_PROBE');
+    expect(assertions[0].status).toBe('BLOCKED');
+    expect(assertions[0].rootCause).toBe('GOAL_NOT_REACHED');
+  });
+
+  it('fails an explicit expectation when the requested capability is absent', () => {
+    const plan = createTestPlan({ prompt: 'ensure CSV export is available', targetUrl: 'https://example.test' });
+    const assertions = verifyPlanAssertions({
+      plan,
+      observation: observation({ pageText: 'Export as PDF' }),
+      actions: [successAction('click', 'Export')],
+      evidence: ['Export menu checked.'],
+      llmReport: {
+        result: 'PASS',
+        scenario: 'ensure CSV export is available',
+        confirmedBugs: [],
+        warnings: [],
+        stepsExecuted: ['Opened export menu'],
+        evidence: ['Export menu contains PDF only. CSV export is not present.'],
+        probeFinding: {
+          target: 'csv export',
+          outcome: 'ABSENT',
+          scope: 'export menu',
+          observedMatches: [],
+          observedAlternatives: ['PDF'],
+          evidence: ['Export menu contains PDF only.'],
+          summary: 'CSV export was not observed in the export menu.'
+        },
+        finalUrl: 'https://example.test',
+        screenshots: [],
+        consoleErrors: [],
+        fixRecommendations: []
+      }
+    });
+
+    expect(plan.taskIntent).toBe('DISCOVERY_PROBE');
+    expect(assertions[0].status).toBe('FAIL');
+    expect(assertions[0].rootCause).toBe('WEBSITE_BUG');
+  });
+
   it('verifies a cart-like local fixture from final cart state', () => {
     const completion = detectGoalCompletion({
       task: 'add product to cart',

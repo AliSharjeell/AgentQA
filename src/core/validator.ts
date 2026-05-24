@@ -132,6 +132,7 @@ function compactResultForValidator(result: QaRunResult): Partial<QaRunResult> {
     stats: result.stats,
     acceptance_criteria: result.acceptance_criteria,
     objective_milestones: result.objective_milestones,
+    probe_finding: result.probe_finding,
     compact_final_state: result.compact_final_state,
     issues: result.issues,
     assertions: result.assertions,
