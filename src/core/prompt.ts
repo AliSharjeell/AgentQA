@@ -56,7 +56,8 @@ function getCoreBehaviourRules(): string {
 4. Maintain the full task plan and mark only verified steps as DONE.
 5. If a tactic fails, choose a different visible affordance, scroll, read state, wait, or fail with evidence.
 6. Never claim PASS without DOM/page evidence.
-7. Only report a website bug when deterministic evidence proves the product behavior is wrong.`;
+7. Only report a website bug when deterministic evidence proves the product behavior is wrong.
+8. If an action (like clicking a button) fails or does not advance the state, reason about missing prerequisites. Scroll up to check for unfulfilled requirements (e.g., missed required fields, unchecked terms, or missing prior steps).`;
 }
 
 function summarizeFields(observation: PageObservation): string {
