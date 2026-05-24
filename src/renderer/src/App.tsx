@@ -1037,6 +1037,7 @@ function SettingsPanel(): JSX.Element {
         </div>
       </div>
 
+      {false && (
       <div className="space-y-3 pt-4 border-t border-white/10">
         <p className="text-[10px] font-medium text-amber-500 uppercase tracking-wider select-none">Experimental</p>
         <div className="flex items-center gap-2">
@@ -1086,6 +1087,7 @@ function SettingsPanel(): JSX.Element {
           </button>
         </div>
       </div>
+      )}
 
       <div className="flex gap-2 pt-4">
         <button className="primary-button flex-1" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save Settings"}</button>
