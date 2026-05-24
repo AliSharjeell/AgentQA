@@ -413,7 +413,7 @@ function decideVerdict(
   actions: QaRunAction[],
   evidenceWarnings: EvidenceWarning[],
   stats: ExtendedQaRunStats
-): { status: QaVerdict; rootCause: QaRootCause; severity: QaSeverity } {
+): { status: QaVerdict; rootCause?: QaRootCause; severity: QaSeverity } {
   const failedBug = assertions.find((a) => a.required !== false && a.status === 'FAIL' && a.rootCause === 'WEBSITE_BUG');
   if (failedBug) {
     return { status: 'FAIL', rootCause: 'WEBSITE_BUG', severity: 'HIGH' };
@@ -442,9 +442,9 @@ function decideVerdict(
   const allReqPassed = assertions.filter(a => a.required !== false).every(a => a.status === 'PASS' || a.status === 'PASS_WITH_WARNINGS' || a.status === 'WARNING');
   if (allReqPassed && assertions.length > 0) {
     if (hasWarnings) {
-      return { status: 'WARNING', rootCause: stats.network_errors > 0 ? 'ENVIRONMENT_ISSUE' : 'AMBIGUOUS', severity: 'MEDIUM' };
+      return { status: 'WARNING', rootCause: stats.network_errors > 0 ? 'ENVIRONMENT_ISSUE' : undefined, severity: 'MEDIUM' };
     }
-    return { status: 'PASS', rootCause: 'AMBIGUOUS', severity: 'INFO' };
+    return { status: 'PASS', rootCause: undefined, severity: 'INFO' };
   }
 
   return { status: 'BLOCKED', rootCause: 'AMBIGUOUS', severity: 'MEDIUM' };

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { QaAssertionResult, QaRunAction } from '../shared/types';
 import type { PageObservation } from './harness';
 import type { QaTestPlan } from './planner';
-import { buildQaRunResult } from './reporter';
+import { applyValidatorGating, buildQaRunResult } from './reporter';
+import type { QaValidatorResult } from '../shared/types';
 
 const basePlan: QaTestPlan = {
   testId: 'TC-UNIT-001',
@@ -266,5 +267,71 @@ describe('QA verdict reporting', () => {
     expect(result.raw_agent_report).toBeDefined();
     expect(result.raw_agent_report?.trusted).toBe(false);
     expect(result.raw_agent_report?.raw_data).toEqual(expect.objectContaining({ result: 'PASS' }));
+  });
+});
+
+describe('Validator LLM Gating', () => {
+  it('leaves a VALID_REPORT untouched', () => {
+    const result = build();
+    const validatorResult: QaValidatorResult = {
+      verdict: 'VALID_REPORT',
+      confidence: 'HIGH',
+      can_show_to_user: true,
+      summary: 'Looks good.',
+      critical_findings: [],
+      suggested_report_patches: [],
+      final_recommendation: 'SHOW'
+    };
+    const gated = applyValidatorGating(result, validatorResult);
+    expect(gated.status).toBe('PASS');
+    expect(gated.root_cause).toBeUndefined();
+  });
+
+  it('blocks a REPORT_NEEDS_FIX and turns WEBSITE_BUG issues into REPORT_INCONSISTENCY', () => {
+    const result = build({
+      assertions: [{
+        ...passAssertion(),
+        status: 'FAIL',
+        expected: 'Cart contains iPhone',
+        actual: 'Cart is empty',
+        rootCause: 'WEBSITE_BUG'
+      }]
+    });
+    
+    // Original result before gating should be FAIL with WEBSITE_BUG
+    expect(result.status).toBe('FAIL');
+    expect(result.root_cause).toBe('WEBSITE_BUG');
+    
+    const validatorResult: QaValidatorResult = {
+      verdict: 'REPORT_NEEDS_FIX',
+      confidence: 'HIGH',
+      can_show_to_user: false,
+      summary: 'The agent hallucinates cart state.',
+      critical_findings: [],
+      suggested_report_patches: [],
+      final_recommendation: 'NEED_HUMAN_REVIEW'
+    };
+    
+    const gated = applyValidatorGating(result, validatorResult);
+    expect(gated.status).toBe('BLOCKED');
+    expect(gated.root_cause).toBe('REPORT_INCONSISTENCY');
+    expect(gated.issues[0].type).toBe('REPORT_INCONSISTENCY');
+  });
+
+  it('blocks an UNTRUSTWORTHY_REPORT and changes summary', () => {
+    const result = build();
+    const validatorResult: QaValidatorResult = {
+      verdict: 'UNTRUSTWORTHY_REPORT',
+      confidence: 'LOW',
+      can_show_to_user: false,
+      summary: 'Failed to process.',
+      critical_findings: [],
+      suggested_report_patches: [],
+      final_recommendation: 'NEED_HUMAN_REVIEW'
+    };
+    const gated = applyValidatorGating(result, validatorResult);
+    expect(gated.status).toBe('BLOCKED');
+    expect(gated.root_cause).toBe('REPORT_INCONSISTENCY');
+    expect(gated.summary).toContain('not trustworthy');
   });
 });
