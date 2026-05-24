@@ -911,7 +911,7 @@ function buildDomSnapshotPython(): string {
             }
           }
 
-          const sanitizeId = (str: string) => (str || '').replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_').toLowerCase().replace(/^_|_$/g, '').slice(0, 30);
+          const sanitizeId = (str) => (str || '').replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_').toLowerCase().replace(/^_|_$/g, '').slice(0, 30);
           const baseName = description || el.getAttribute('name') || el.id || tag;
           const field_id = 'field_' + sanitizeId(baseName) + '_' + (elements.length - 1);
 
@@ -932,7 +932,7 @@ function buildDomSnapshotPython(): string {
             name: el.getAttribute('name') || '',
             html_id: el.id || '',
             initial_value: String(value || ''),
-            label_source: labelSource as any,
+            label_source: labelSource,
             confidence: 1.0,
             bbox: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
             nearby_text: [],
