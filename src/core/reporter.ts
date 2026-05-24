@@ -42,6 +42,19 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
   const acceptanceCriteria = buildAcceptanceCriteria(input.plan, input.assertions, stats);
   const issues = buildIssues(input.actions, input.assertions, input.evidenceWarnings, input.artifacts);
   const verdict = decideVerdict(input.llmReport, input.assertions, input.actions, input.evidenceWarnings, stats);
+  const compactFinalState = input.observations.at(-1)?.compactFinalState;
+  const objectiveMilestones = input.plan.taskIntent === 'TRANSACTION_OR_CART'
+    ? input.assertions
+        .filter((assertion) => /^M\d+_/.test(assertion.id))
+        .map((assertion) => ({
+          id: assertion.id,
+          label: assertion.description,
+          status: assertion.status,
+          rootCause: assertion.rootCause,
+          evidence: assertion.evidence || [],
+          message: assertion.message
+        }))
+    : undefined;
 
   // Handle provider events - if provider had transient errors but recovered, add warning
   const providerEvents = input.providerEvents || [];
@@ -97,6 +110,8 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
     stats,
     network_errors: networkErrors,
     acceptance_criteria: acceptanceCriteria,
+    objective_milestones: objectiveMilestones,
+    compact_final_state: compactFinalState,
     issues,
     ...issueBuckets(issues),
     actions: input.actions,
@@ -123,6 +138,39 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
     element_registry_count: result.stats.element_registry_count ?? 0,
     verified_fields_count: result.stats.verified_fields_count ?? 0
   };
+  return result;
+}
+
+export function applyVerifierRuntimeWarning(result: QaRunResult, error: Error | string): QaRunResult {
+  const message = error instanceof Error ? error.message : String(error);
+  const screenshots = defaultScreenshotEvidence(result);
+  const issue: QaIssue = {
+    id: 'VERIFIER_WARNING',
+    title: 'Verifier Runtime Error',
+    type: 'VERIFIER_RUNTIME_ERROR',
+    category: 'VERIFIER_ISSUE',
+    severity: 'HIGH',
+    status: 'WARNING',
+    expected: 'Final deterministic field verifier completes for relevant fields.',
+    actual: message,
+    affected_elements: [],
+    evidence: {
+      screenshots,
+      dom_snapshot: result.artifacts.dom_after,
+      action_trace: result.artifacts.action_trace
+    },
+    recommendation: 'Fix verifier chunking or field-verifier payload sizing, then rerun. Keep the objective milestone result separate from this verifier issue.'
+  };
+  result.issues.push(issue);
+  result.summary = `${result.summary} Final deterministic field verification also failed: ${message}.`;
+  result.verification_summary = {
+    status: result.status,
+    field_registry_count: result.stats.field_registry_count ?? 0,
+    element_registry_count: result.stats.element_registry_count ?? 0,
+    verified_fields_count: result.stats.verified_fields_count ?? 0,
+    verifier_error: message
+  };
+  Object.assign(result, issueBuckets(result.issues));
   return result;
 }
 
@@ -268,6 +316,9 @@ export function categoryForRootCause(rootCause: QaRootCause | undefined): QaIssu
     case 'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED':
     case 'GOAL_NOT_REACHED':
     case 'REQUIRED_AFFORDANCE_NOT_FOUND':
+    case 'CTA_NOT_FOUND':
+    case 'REQUIRED_PREREQUISITES_UNRESOLVED':
+    case 'NO_PROGRESS':
     case 'AMBIGUOUS_STATE': return 'AGENT_ISSUE';
     case 'TEST_DATA_ISSUE': return 'TEST_DATA_ISSUE';
     case 'ENVIRONMENT_ISSUE': return 'ENVIRONMENT_ISSUE';
@@ -592,6 +643,9 @@ function decideVerdict(
     'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED',
     'GOAL_NOT_REACHED',
     'REQUIRED_AFFORDANCE_NOT_FOUND',
+    'CTA_NOT_FOUND',
+    'REQUIRED_PREREQUISITES_UNRESOLVED',
+    'NO_PROGRESS',
     'AMBIGUOUS_STATE'
   ];
   const failedAgent = assertions.find(a => a.required !== false && a.status === 'FAIL' && Boolean(a.rootCause && blockedRootCauses.includes(a.rootCause)));
@@ -734,11 +788,38 @@ function buildSummary(
   if (status === 'WARNING') {
     return `The main objective was verified, but ${evidenceWarnings.length + stats.console_errors + stats.network_errors} warning signal(s) were captured.`;
   }
+  if (plan.taskIntent === 'TRANSACTION_OR_CART') {
+    return buildTransactionSummary(assertions);
+  }
   const firstProblem = assertions.find((assertion) => assertion.status === 'FAIL' || assertion.status === 'BLOCKED');
   if (firstProblem) {
     return `${firstProblem.description}: expected ${String(firstProblem.expected ?? 'verified state')}, actual ${String(firstProblem.actual ?? firstProblem.message ?? 'not verified')}.`;
   }
   return llmReport?.evidence?.[0] || llmReport?.warnings?.[0] || 'The QA run could not prove the requested result.';
+}
+
+function buildTransactionSummary(assertions: QaAssertionResult[]): string {
+  const byId = new Map(assertions.map((assertion) => [assertion.id, assertion]));
+  const progress = [
+    byId.get('M1_TARGET_ITEM_FOUND')?.status === 'PASS' ? 'reached evidence for the requested item/page' : '',
+    byId.get('M2_CONFIGURATION_STARTED')?.status === 'PASS' ? 'started the configuration/selection flow' : '',
+    byId.get('M3_REQUIRED_OPTIONS_RESOLVED')?.status === 'PASS' ? 'resolved required choices' : ''
+  ].filter(Boolean);
+  const addClicked = byId.get('M5_ADD_ACTION_CLICKED')?.status === 'PASS';
+  const cartVerified = byId.get('M6_CART_OR_BAG_VERIFIED')?.status === 'PASS';
+  if (addClicked && !cartVerified) {
+    return 'The agent executed an add-to-cart/add-to-bag action, but did not verify that the requested item appeared in the cart/bag. No website bug is proven.';
+  }
+
+  const blocked = assertions.find((assertion) => assertion.status === 'BLOCKED' || assertion.status === 'FAIL');
+  const prefix = progress.length ? `The agent ${progress.join(' and ')}, but` : 'The agent';
+  const missing = blocked?.rootCause === 'CTA_NOT_FOUND'
+    ? 'did not find a valid add-to-cart/add-to-bag action'
+    : blocked?.rootCause === 'REQUIRED_PREREQUISITES_UNRESOLVED'
+      ? 'did not prove all required choices/prerequisites were resolved'
+      : 'did not reach and verify the requested cart/bag outcome';
+  const detail = blocked?.message ? ` ${blocked.message}` : '';
+  return `${prefix} ${missing}.${detail} No website bug is proven.`;
 }
 
 function buildPassWarningMessages(plan: QaTestPlan, stats: ExtendedQaRunStats, evidenceWarnings: EvidenceWarning[]): string[] {
@@ -789,6 +870,9 @@ function recommendationFor(rootCause: QaRootCause | undefined, status: QaVerdict
   if (rootCause === 'NO_FIELDS_FOUND') return 'Rerun on a page or step with editable controls, or change the task if no form fields are expected.';
   if (rootCause === 'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED') return 'Check that the page loaded and exposes interactive UI, then rerun with stronger observation evidence.';
   if (rootCause === 'REQUIRED_AFFORDANCE_NOT_FOUND') return 'Verify the requested control exists and is visible, or adjust the task to an available affordance.';
+  if (rootCause === 'CTA_NOT_FOUND') return 'Continue resolving prerequisites and scanning visible/sticky/footer regions; if no equivalent add action exists after that, rerun with CTA_NOT_FOUND evidence.';
+  if (rootCause === 'REQUIRED_PREREQUISITES_UNRESOLVED') return 'Resolve or document the required visible choices before looking for the final action.';
+  if (rootCause === 'NO_PROGRESS') return 'Stop repeated low-value actions and choose a new milestone-oriented tactic before rerunning.';
   if (rootCause === 'GOAL_NOT_REACHED') return 'Review the action trace and final DOM evidence, then rerun with clearer target state if needed.';
   if (rootCause === 'AMBIGUOUS_STATE') return 'Collect stronger page evidence or clarify the expected result before making a product bug claim.';
   if (rootCause === 'TEST_DATA_ISSUE') return 'Provide valid test data or credentials and rerun the scenario.';

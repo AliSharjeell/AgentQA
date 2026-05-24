@@ -11,6 +11,7 @@ import type { CliReport, ObservedElement, PageObservation, StructuredAction } fr
 import type { QaAssertionSpec, QaTestPlan } from './planner';
 import { detectGoalCompletion, elementRegistryForObservation } from './intent';
 import { redactSensitiveText, redactValue } from './sanitize';
+import { buildCompactFinalState, transactionMilestones } from './state';
 
 export function verifyAction(input: {
   actionId: string;
@@ -130,7 +131,36 @@ export function verifyPlanAssertions(input: {
       'NO_FIELDS_FOUND'
     )];
   }
+  if (input.plan.taskIntent === 'TRANSACTION_OR_CART') {
+    return transactionMilestoneAssertions(input.plan, input.observation, input.actions);
+  }
   return input.plan.assertions.map((spec) => verifyPlanAssertion(spec, input.observation, input.llmReport, input.evidence, input.actions));
+}
+
+function transactionMilestoneAssertions(plan: QaTestPlan, observation: PageObservation, actions: QaRunAction[]): QaAssertionResult[] {
+  const compactState = observation.compactFinalState || buildCompactFinalState({
+    task: plan.task,
+    intent: 'TRANSACTION_OR_CART',
+    observation,
+    actions
+  });
+  const milestones = transactionMilestones({ task: plan.task, observation, actions, compactState });
+  const milestoneById = new Map(milestones.map((milestone) => [milestone.id, milestone]));
+  return plan.assertions.map((spec) => {
+    const milestone = milestoneById.get(spec.id);
+    if (!milestone) return verifyPlanAssertion(spec, observation, null, [], actions);
+    return {
+      id: spec.id,
+      description: milestone.label,
+      expected: 'PASS',
+      actual: milestone.status,
+      status: milestone.status,
+      rootCause: milestone.rootCause,
+      required: spec.required,
+      evidence: milestone.evidence,
+      message: milestone.message
+    };
+  });
 }
 
 function verifyAssertionsFromPlannedActions(actions: QaRunAction[], observation: PageObservation, evidence: string[]): QaAssertionResult[] {

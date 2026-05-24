@@ -303,6 +303,49 @@ export function detectGoalCompletion(input: {
   }
 
   const reportPassed = reportClaimsPass(input.llmReport);
+  if (intent === 'NAVIGATION') {
+    const passed = hasKeywordEvidence && Boolean(url || title || pageText);
+    return {
+      passed,
+      status: passed ? 'PASS' : 'BLOCKED',
+      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
+      expected: keywords.length ? `Navigation state containing: ${keywords.join(', ')}` : 'Requested navigation target reached',
+      actual: passed ? true : 'Navigation target was not visible in URL/title/page text',
+      evidence: baseEvidence,
+      message: passed ? undefined : 'The final page state did not prove the requested navigation target.'
+    };
+  }
+
+  if (intent === 'SEARCH_OR_DISCOVERY') {
+    const searchState = /\b(search|results?|matches|found|showing)\b/i.test(`${combinedState} ${actionText}`);
+    const passed = hasKeywordEvidence && searchState;
+    return {
+      passed,
+      status: passed ? 'PASS' : 'BLOCKED',
+      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
+      expected: keywords.length ? `Search/discovery evidence containing: ${keywords.join(', ')}` : 'Requested result visible',
+      actual: passed ? true : 'Search or discovery result evidence was not visible',
+      evidence: baseEvidence,
+      message: passed ? undefined : 'The final page state did not prove the requested search/discovery result.'
+    };
+  }
+
+  if (intent === 'TRANSACTION_OR_CART') {
+    const addExecuted = /\badd\b.*\b(cart|bag|basket|product|item)\b/i.test(actionText) &&
+      !/\b(shopping bag|view bag|view cart|open bag|open cart|review bag|review cart)\b/i.test(actionText);
+    const cartState = /\b(cart|bag|basket|checkout|quantity|item added|added|subtotal)\b/i.test(combinedState);
+    const passed = addExecuted && cartState && hasKeywordEvidence;
+    return {
+      passed,
+      status: passed ? 'PASS' : 'BLOCKED',
+      rootCause: passed ? undefined : 'GOAL_NOT_REACHED',
+      expected: 'Add action executed and final cart/bag state contains requested target evidence',
+      actual: passed ? true : 'Cart/bag outcome was not deterministically verified',
+      evidence: baseEvidence,
+      message: passed ? undefined : 'Product/configuration progress is not enough; the final cart/bag outcome was not verified.'
+    };
+  }
+
   const generalPassed = reportPassed && hasKeywordEvidence;
 
   return {

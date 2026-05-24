@@ -14,10 +14,16 @@ import { createAgentExecutor, isExecutorAvailable, type AgentExecutor } from './
 import { buildPrompt, normalizeScript, type AgentHistoryEntry, type AgentPlanStep } from './prompt';
 import { EvidenceCollector } from './evidence';
 import { createTestPlan } from './planner';
-import { buildQaRunResult, applyValidatorGating, applyVerifierRuntimeErrorGate, writeQaReportFiles } from './reporter';
+import { buildQaRunResult, applyValidatorGating, applyVerifierRuntimeErrorGate, applyVerifierRuntimeWarning, writeQaReportFiles } from './reporter';
 import { verifyAction, verifyPlanAssertions } from './verification';
 import { runValidatorAudit } from './validator';
 import { detectGoalCompletion, elementRegistryForObservation, resolveInitialObservationReadiness } from './intent';
+import {
+  buildCompactFinalState,
+  compactObservationForReport,
+  relevantFieldsForVerification,
+  repeatedCartViewNoProgress
+} from './state';
 
 export interface TaskStep {
   instruction: string;
@@ -458,6 +464,17 @@ function recentFailureCount(history: AgentHistoryEntry[]): number {
     .length;
 }
 
+function scrollMadeProgress(before: PageObservation, after: PageObservation): boolean {
+  const beforeY = before.page.sy ?? 0;
+  const afterY = after.page.sy ?? 0;
+  if (Math.abs(afterY - beforeY) > 24) return true;
+  if ((after.page.ph ?? 0) !== (before.page.ph ?? 0)) return true;
+  const beforeElements = elementRegistryForObservation(before).filter((element) => element.visible !== false).length;
+  const afterElements = elementRegistryForObservation(after).filter((element) => element.visible !== false).length;
+  if (Math.abs(afterElements - beforeElements) >= 3) return true;
+  return after.pageText.length > before.pageText.length + 120;
+}
+
 function decideExecutorSwitch(input: {
   mode: AgentRunMode;
   allowEscalation: boolean;
@@ -610,10 +627,15 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     consoleLogPath = evidenceCollector.saveConsoleLog(observations);
     networkLogPath = evidenceCollector.saveNetworkLog(observations);
     let verifierRuntimeError: Error | null = null;
-    if (executor && globalFieldRegistry.length > 0) {
+    const fieldsToVerify = relevantFieldsForVerification({
+      intent: testPlan.taskIntent,
+      registry: globalFieldRegistry,
+      actions: qaActions
+    });
+    if (executor && fieldsToVerify.length > 0) {
       try {
-        const fieldResults = await executor.verifyFields(globalFieldRegistry);
-        for (const entry of globalFieldRegistry) {
+        const fieldResults = await executor.verifyFields(fieldsToVerify);
+        for (const entry of fieldsToVerify) {
           const fr = fieldResults[entry.field_id];
           if (fr && fr.found) {
             entry.value = fr.value;
@@ -627,7 +649,24 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         verifierRuntimeError = err;
       }
     }
-    const verificationObservation = { ...finalObservation, fieldRegistry: globalFieldRegistry };
+    const compactState = buildCompactFinalState({
+      task: prompt,
+      intent: testPlan.taskIntent,
+      observation: finalObservation,
+      actions: qaActions
+    });
+    const verificationObservation = compactObservationForReport({
+      task: prompt,
+      intent: testPlan.taskIntent,
+      observation: { ...finalObservation, fieldRegistry: globalFieldRegistry },
+      actions: qaActions,
+      fieldRegistry: testPlan.taskIntent === 'FORM_INTERACTION' ? fieldsToVerify : relevantFieldsForVerification({
+        intent: testPlan.taskIntent,
+        registry: globalFieldRegistry,
+        actions: qaActions
+      }),
+      compactState
+    });
     domAfterPath = evidenceCollector.saveDomSnapshot('dom-after.json', verificationObservation);
     const reportingObservations = observations.length
       ? [...observations.slice(0, -1), verificationObservation]
@@ -666,11 +705,13 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       providerEvents
     });
 
-    if (verifierRuntimeError) {
+    if (verifierRuntimeError && testPlan.taskIntent === 'FORM_INTERACTION') {
       applyVerifierRuntimeErrorGate(finalReport, verifierRuntimeError);
+    } else if (verifierRuntimeError) {
+      applyVerifierRuntimeWarning(finalReport, verifierRuntimeError);
     }
 
-    if (!verifierRuntimeError) {
+    if (!verifierRuntimeError || testPlan.taskIntent !== 'FORM_INTERACTION') {
       if (finalReport.status === 'INFRA_FAILED') {
         finalReport.validator_review = {
           verdict: 'VALID_REPORT',
@@ -685,7 +726,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         try {
           addStep('Running Validator LLM audit', 'running');
           onStep({ instruction: 'Running Validator LLM audit', status: 'running' });
-          const validatorReview = await runValidatorAudit({ settings, result: finalReport, observations });
+          const validatorReview = await runValidatorAudit({ settings, result: finalReport, observations: reportingObservations });
           applyValidatorGating(finalReport, validatorReview);
           addStep('Running Validator LLM audit', 'done', 'Validator review completed');
           onStep({ instruction: 'Running Validator LLM audit', status: 'done', result: 'Validator review completed' });
@@ -1115,12 +1156,13 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     }
 
     const signature = actionSignature(action);
-    if (action.action === 'scroll' && scrollStreak >= 2) {
+    const maxNoProgressScrolls = testPlan.taskIntent === 'TRANSACTION_OR_CART' ? 3 : 2;
+    if (action.action === 'scroll' && scrollStreak >= maxNoProgressScrolls) {
       blockedScrollAttempts++;
-      const result = `Blocked scroll loop: already scrolled ${scrollStreak} times without a click, type, or navigation changing tactics.`;
+      const result = `Blocked scroll loop: already scrolled ${scrollStreak} times without observable page progress.`;
       history.push({ thought: parsed?.thought, step: stepNum, action: action.action, value: String(action.dy ?? ''), status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
-      resetDirective = `Stop scrolling. You have already used scrolling repeatedly. Choose a visible link/control, navigate to a specific forward URL if justified by the task, read/verify visible state, or fail with evidence. Do not restart from the beginning.`;
+      resetDirective = `Stop scrolling until you choose a different tactic. Use the current observation to click a visible control, resolve a prerequisite, read/verify state, or fail with evidence. Do not restart from the beginning.`;
       if (blockedScrollAttempts >= 2) {
         const report = makeReport({
           result: 'AGENT_FAILED',
@@ -1200,6 +1242,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     addStep(actionDescription, 'running');
     onStep({ instruction: actionDescription, status: 'running' });
 
+    const beforeActionObservation = observation;
     const result = await executor.execute(executableAction, target);
 
     const parsedObservation = result.observation;
@@ -1246,10 +1289,50 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     }));
     if (actionScreenshot) evidence.push(actionScreenshot);
 
+    if (testPlan.taskIntent === 'TRANSACTION_OR_CART' && repeatedCartViewNoProgress(qaActions)) {
+      const resultText = 'The agent repeatedly opened the cart/bag view without executing an add-to-cart/add-to-bag action.';
+      qaActions.push({
+        action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
+        action: 'no_progress_guard',
+        action_result: 'BLOCKED',
+        verification: {
+          expected: 'Milestone progress toward add action or verified cart state',
+          actual: resultText,
+          status: 'BLOCKED',
+          rootCause: 'NO_PROGRESS',
+          message: resultText
+        },
+        timestamp: new Date().toISOString()
+      });
+      history.push({
+        step: stepNum,
+        action: 'no_progress_guard',
+        status: 'blocked',
+        result: resultText,
+        url: currentUrl
+      });
+      const report = makeReport({
+        result: 'AGENT_FAILED',
+        scenario: prompt,
+        summary: resultText,
+        finalUrl: currentUrl,
+        history,
+        faults,
+        evidence: [resultText, observation.pageText.slice(0, 500)],
+        consoleErrors: observation.consoleErrors
+      });
+      return finishWithReport(report, 'No milestone progress.', currentUrl);
+    }
+
     lastActionResult = result.ok ? actionResult : `Action failed: ${actionResult}`;
     if (result.ok) {
       if (action.action === 'scroll') {
-        scrollStreak++;
+        if (scrollMadeProgress(beforeActionObservation, observation)) {
+          scrollStreak = 0;
+          blockedScrollAttempts = 0;
+        } else {
+          scrollStreak++;
+        }
       } else if (['click', 'type', 'fill', 'select', 'check', 'uncheck', 'radio', 'press_key', 'navigate', 'batch'].includes(action.action)) {
         scrollStreak = 0;
         blockedScrollAttempts = 0;

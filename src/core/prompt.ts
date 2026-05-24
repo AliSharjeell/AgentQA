@@ -57,7 +57,8 @@ function getCoreBehaviourRules(): string {
 5. If a tactic fails, choose a different visible affordance, scroll, read state, wait, or fail with evidence.
 6. Never claim PASS without DOM/page evidence.
 7. Only report a website bug when deterministic evidence proves the product behavior is wrong.
-8. If an action (like clicking a button) fails or does not advance the state, reason about missing prerequisites. Scroll up to check for unfulfilled requirements (e.g., missed required fields, unchecked terms, or missing prior steps).`;
+8. For transaction/cart tasks, viewing a cart/bag icon or menu is not the same as adding an item. Verify an add action and final cart/bag state.
+9. If an action (like clicking a button) fails or does not advance the state, reason about missing prerequisites. Scroll up to check for unfulfilled requirements (e.g., missed required fields, unchecked terms, or missing prior steps).`;
 }
 
 function summarizeFields(observation: PageObservation): string {
@@ -206,6 +207,7 @@ Important:
 - When close to the step limit, do not rush a false PASS. The harness may separately ask for a bounded step extension if the task is clearly near completion.
 - If an element is missing, scroll/read/wait or choose another visible element.
 - If selecting product options, choose the required base/default option from current DOM text and verify selection before add-to-cart.
+- For cart tasks, do not treat a global cart/bag icon click as an add-to-cart/add-to-bag action. It can only verify cart state.
 - Keep a QA fault log. A failed automation action is not automatically a site bug.
 - PASS must cite exact DOM/cart evidence when the task requires exact product names or cart contents.
 - If the task cannot progress because the needed UI affordance is missing, report AGENT_FAILED with a clear REQUIRED_AFFORDANCE_NOT_FOUND reason.

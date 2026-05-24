@@ -1,6 +1,7 @@
 import { callForScript } from './api';
 import type { AppSettings, QaRunResult, ValidatorReview } from '../shared/types';
 import type { PageObservation } from './harness';
+import { splitSafe } from './chunker';
 
 export interface ValidatorInput {
   settings: AppSettings;
@@ -10,6 +11,16 @@ export interface ValidatorInput {
 
 export async function runValidatorAudit(input: ValidatorInput): Promise<ValidatorReview> {
   const { settings, result, observations } = input;
+  const compactResult = compactResultForValidator(result);
+  const compactObservations = observations.map((o) => ({
+    url: o.page.url || o.taskUrl,
+    title: o.page.title,
+    console: o.consoleErrors,
+    network: o.networkErrors,
+    compactFinalState: o.compactFinalState
+  }));
+  const resultJson = splitSafe(JSON.stringify(compactResult, null, 2), 60000).join('\n\n--- chunk ---\n\n');
+  const observationsJson = splitSafe(JSON.stringify(compactObservations, null, 2), 30000).join('\n\n--- chunk ---\n\n');
 
   const prompt = `You are the AgentQA Validator LLM. Your job is to act as a QA report AUDITOR.
 You are NOT the source of truth for whether the website works. The deterministic verifier is the source of truth.
@@ -22,10 +33,10 @@ CONTEXT DATA
 ==================================================
 
 QA Run Result (JSON):
-${JSON.stringify(result, null, 2)}
+${resultJson}
 
 Observations (Network/Console Errors):
-${JSON.stringify(observations.map(o => ({ url: o.taskUrl, console: o.consoleErrors, network: o.networkErrors })), null, 2)}
+${observationsJson}
 
 ==================================================
 AUDIT RULES
@@ -106,4 +117,29 @@ OUTPUT SCHEMA (Strict JSON)
       final_recommendation: 'NEED_HUMAN_REVIEW'
     };
   }
+}
+
+function compactResultForValidator(result: QaRunResult): Partial<QaRunResult> {
+  return {
+    run_id: result.run_id,
+    test_id: result.test_id,
+    title: result.title,
+    target_url: result.target_url,
+    status: result.status,
+    root_cause: result.root_cause,
+    severity: result.severity,
+    summary: result.summary,
+    stats: result.stats,
+    acceptance_criteria: result.acceptance_criteria,
+    objective_milestones: result.objective_milestones,
+    compact_final_state: result.compact_final_state,
+    issues: result.issues,
+    assertions: result.assertions,
+    actions: result.actions.slice(-80),
+    evidence_status: result.evidence_status,
+    reproducible_steps: result.reproducible_steps,
+    recommendation: result.recommendation,
+    verification_summary: result.verification_summary,
+    provider_warnings: result.provider_warnings
+  };
 }

@@ -156,13 +156,26 @@ function navigationPlan(task: string): QaTestPlan {
 }
 
 function transactionPlan(task: string): QaTestPlan {
-  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested cart or transaction state is verified', task, 'AC-001')];
+  const assertions: QaAssertionSpec[] = [
+    objectiveAssertion('M1_TARGET_ITEM_FOUND', 'Requested target item/page was found', task, 'AC-001'),
+    objectiveAssertion('M2_CONFIGURATION_STARTED', 'Configuration or selection flow was started', task, 'AC-002'),
+    objectiveAssertion('M3_REQUIRED_OPTIONS_RESOLVED', 'Required choices/prerequisites were selected or identified', task, 'AC-002'),
+    objectiveAssertion('M4_ADD_ACTION_FOUND', 'Add-to-cart/add-to-bag action was found', task, 'AC-003'),
+    objectiveAssertion('M5_ADD_ACTION_CLICKED', 'Add-to-cart/add-to-bag action was executed', task, 'AC-004'),
+    objectiveAssertion('M6_CART_OR_BAG_VERIFIED', 'Cart/bag state contains the requested item', task, 'AC-005')
+  ];
   return {
     testId: 'TC-TRANSACTION-001',
     title: 'Verify requested cart or transaction flow',
     task,
     taskIntent: 'TRANSACTION_OR_CART',
-    acceptanceCriteria: [criterion('AC-001', 'Final page state reflects the requested item or transaction result', assertions)],
+    acceptanceCriteria: [
+      criterion('AC-001', 'Requested target item/page was found', assertions),
+      criterion('AC-002', 'Required choices/prerequisites were selected or identified', assertions),
+      criterion('AC-003', 'Add-to-cart/add-to-bag action was found', assertions),
+      criterion('AC-004', 'Add-to-cart/add-to-bag action was executed', assertions),
+      criterion('AC-005', 'Cart/bag state contains the requested item', assertions)
+    ],
     assertions,
     edgeCases: ['Choose options from observed DOM only; missing required options are blocked outcomes unless product behavior is proven wrong.']
   };

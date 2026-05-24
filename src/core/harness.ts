@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import type { ElementRegistry, ElementRegistryEntry, FieldRegistry, FieldRegistryEntry, QaNetworkErrorDetail } from '../shared/types';
+import type { ElementRegistry, ElementRegistryEntry, FieldRegistry, FieldRegistryEntry, QaCompactFinalState, QaNetworkErrorDetail } from '../shared/types';
 
 export function safeJsonForInjectedJs(value: unknown): string {
   return JSON.stringify(value)
@@ -108,6 +108,7 @@ export interface PageObservation {
   consoleErrors: string[];
   networkErrors: (string | QaNetworkErrorDetail)[];
   actionDetails?: unknown;
+  compactFinalState?: QaCompactFinalState;
 }
 
 export type StructuredActionName =
@@ -302,7 +303,7 @@ def set_value(selector, text):
     _sel = _json.dumps(selector)
     _val = _json.dumps(text)
     result = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -311,12 +312,12 @@ def set_value(selector, text):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -325,21 +326,21 @@ def set_value(selector, text):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
         const el = document.querySelector({_sel});
         if (!el) throw new Error('set_value: element not found: ' + {_sel});
         const excludedInputTypes = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
@@ -408,7 +409,7 @@ def click_element(selector, fallback_x=None, fallback_y=None):
     """Click an element with real pointer/mouse events at its center."""
     _sel = _json.dumps(selector)
     pos = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -417,12 +418,12 @@ def click_element(selector, fallback_x=None, fallback_y=None):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -431,21 +432,21 @@ def click_element(selector, fallback_x=None, fallback_y=None):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
         const el = document.querySelector({_sel});
         if (!el) return null;
         el.scrollIntoView({{ block: 'center', inline: 'center' }});
@@ -466,7 +467,7 @@ def select_option(selector, text):
     _sel = _json.dumps(selector)
     _val = _json.dumps(str(text or ""))
     native = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -475,12 +476,12 @@ def select_option(selector, text):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -489,21 +490,21 @@ def select_option(selector, text):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
         const el = document.querySelector({_sel});
         if (!el) throw new Error('select_option: element not found: ' + {_sel});
         if (el.tagName.toLowerCase() !== 'select') return null;
@@ -541,7 +542,7 @@ def select_option(selector, text):
     click_element(selector)
     _time.sleep(0.2)
     option = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -550,12 +551,12 @@ def select_option(selector, text):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -564,21 +565,21 @@ def select_option(selector, text):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
         const target = document.querySelector({_sel});
         const expected = String({_val});
         const want = expected.replace(/\\s+/g, ' ').trim().toLowerCase();
@@ -640,7 +641,7 @@ def select_option(selector, text):
 def focus_target(selector):
     _sel = _json.dumps(selector)
     return js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -649,12 +650,12 @@ def focus_target(selector):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -663,21 +664,21 @@ def focus_target(selector):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
         const root = document.querySelector({_sel});
         if (!root) return false;
         const editable = root.matches('input,textarea,[contenteditable],[role="textbox"],[role="searchbox"]')
@@ -900,7 +901,7 @@ function buildDomSnapshotPython(): string {
   } catch (e) {}
 
   
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -909,12 +910,12 @@ function buildDomSnapshotPython(): string {
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -923,21 +924,21 @@ function buildDomSnapshotPython(): string {
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
       const cssEscape = (value) => {
     if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
     return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\\\$&');
@@ -1421,11 +1422,7 @@ def click_target():
     active_target = action.get("_target") or target
     if not active_target:
         raise Exception("Target element is required for click action.")
-    
-    # NEW: Check if the element is known to be disabled
-    if active_target.get("disabled"):
-        raise Exception("Action rejected: The target element is disabled, locked, or unclickable. Scroll up to find missing prerequisites.")
-        
+
     selector = active_target.get("selector") or ""
     if selector:
         click_element(selector, active_target.get("x", 0), active_target.get("y", 0))
@@ -1448,8 +1445,6 @@ def set_checked_target(checked):
     active_target = action.get("_target") or target
     if not active_target:
         raise Exception("Target element is required for check/radio action.")
-    if active_target.get("disabled"):
-        raise Exception("Action rejected: The target element is disabled, locked, or unclickable. Scroll up to find missing prerequisites.")
 
     selector = active_target.get("selector") or ""
     if not selector:
@@ -1457,7 +1452,7 @@ def set_checked_target(checked):
     sel = json.dumps(selector)
     expected = "true" if checked else "false"
     result = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1466,12 +1461,12 @@ def set_checked_target(checked):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1480,32 +1475,59 @@ def set_checked_target(checked):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
       const root = document.querySelector({sel});
       if (!root) throw new Error('set_checked: element not found: ' + {sel});
       const el = root.matches('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]')
         ? root
         : root.querySelector('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]');
       if (!el) throw new Error('set_checked: no checkbox/radio target for ' + {sel});
-      if (el.disabled || el.getAttribute('aria-disabled') === 'true' || (typeof el.className==='string' && (el.className.toLowerCase().includes('disabled') || el.className.toLowerCase().includes('locked')))) throw new Error('set_checked: target is disabled.');
-      el.scrollIntoView({{ block: 'center', inline: 'center' }});
-      const isChecked = () => Boolean(el.checked || el.getAttribute('aria-checked') === 'true');
+      const wrapper = root.closest('label,button,[role="radio"],[role="checkbox"],[role="option"],[role="button"]') || root;
+      const clickable = (candidate) => {{
+        if (!candidate) return false;
+        if (candidate.disabled) return false;
+        if (candidate.getAttribute('aria-disabled') === 'true') return false;
+        try {{
+          const style = window.getComputedStyle(candidate);
+          if (style.pointerEvents === 'none' || style.cursor === 'not-allowed') return false;
+          const rect = candidate.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          return Boolean(hit && (hit === candidate || candidate.contains(hit) || hit.contains(candidate)));
+        }} catch (e) {{
+          return false;
+        }}
+      }};
+      const nativeDisabled = Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true' || (typeof el.className==='string' && (el.className.toLowerCase().includes('disabled') || el.className.toLowerCase().includes('locked'))));
+      if (nativeDisabled && !clickable(wrapper)) throw new Error('set_checked: target is disabled.');
+      const clickTarget = clickable(wrapper) ? wrapper : el;
+      clickTarget.scrollIntoView({{ block: 'center', inline: 'center' }});
+      const isChecked = () => Boolean(
+        el.checked ||
+        el.getAttribute('aria-checked') === 'true' ||
+        root.getAttribute('aria-checked') === 'true' ||
+        root.getAttribute('aria-selected') === 'true' ||
+        wrapper.getAttribute('aria-checked') === 'true' ||
+        wrapper.getAttribute('aria-selected') === 'true' ||
+        root.classList.contains('selected') ||
+        wrapper.classList.contains('selected')
+      );
       if (isChecked() !== {expected}) {{
-        const rect = el.getBoundingClientRect();
+        const rect = clickTarget.getBoundingClientRect();
         return {{ click: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }};
       }}
       return {{ click: false, checked: isChecked() }};
@@ -1514,7 +1536,7 @@ def set_checked_target(checked):
         click_at_xy(int(result["x"]), int(result["y"]))
         time.sleep(0.1)
     actual = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1523,12 +1545,12 @@ def set_checked_target(checked):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1537,26 +1559,31 @@ def set_checked_target(checked):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
       const root = document.querySelector({sel});
       const el = root && (root.matches('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]')
         ? root
         : root.querySelector('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]'));
-      return Boolean(el && (el.checked || el.getAttribute('aria-checked') === 'true'));
+      const wrapper = root && (root.closest('label,button,[role="radio"],[role="checkbox"],[role="option"],[role="button"]') || root);
+      return Boolean(
+        (el && (el.checked || el.getAttribute('aria-checked') === 'true')) ||
+        (root && (root.getAttribute('aria-checked') === 'true' || root.getAttribute('aria-selected') === 'true' || root.classList.contains('selected'))) ||
+        (wrapper && (wrapper.getAttribute('aria-checked') === 'true' || wrapper.getAttribute('aria-selected') === 'true' || wrapper.classList.contains('selected')))
+      );
     }})()""")
     if bool(actual) != bool(checked):
         raise Exception("set_checked: verification failed. Expected " + str(checked) + " but found " + str(actual))
@@ -1566,8 +1593,6 @@ def select_target(value):
     active_target = action.get("_target") or target
     if not active_target:
         raise Exception("Target element is required for select action.")
-    if active_target.get("disabled"):
-        raise Exception("Action rejected: The target element is disabled, locked, or unclickable. Scroll up to find missing prerequisites.")
 
     selector = active_target.get("selector") or ""
     if not selector:
@@ -1580,14 +1605,12 @@ def hover_target():
     active_target = action.get("_target") or target
     if not active_target:
         raise Exception("Target element is required for hover action.")
-    if active_target.get("disabled"):
-        raise Exception("Action rejected: The target element is disabled, locked, or unclickable. Scroll up to find missing prerequisites.")
 
     selector = active_target.get("selector") or ""
     if selector:
         sel = json.dumps(selector)
         pos = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1596,12 +1619,12 @@ def hover_target():
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1610,21 +1633,21 @@ def hover_target():
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
           const el = document.querySelector({sel});
           if (!el) return null;
           el.scrollIntoView({{ block: 'center', inline: 'center' }});
@@ -1667,7 +1690,7 @@ def read_target():
     if selector:
         sel = json.dumps(selector)
         value = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1676,12 +1699,12 @@ def read_target():
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1690,21 +1713,21 @@ def read_target():
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
           const el = document.querySelector({sel});
           if (!el) return null;
           return ('value' in el && el.value !== undefined && el.value !== '') ? String(el.value) : String(el.innerText || el.textContent || '');
@@ -1718,7 +1741,7 @@ def read_selector_state(selector):
         return None
     sel = json.dumps(selector)
     return js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1727,12 +1750,12 @@ def read_selector_state(selector):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1741,21 +1764,21 @@ def read_selector_state(selector):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
       const el = document.querySelector({sel});
       if (!el) return {{ found: false }};
       const tag = el.tagName.toLowerCase();
@@ -1843,7 +1866,7 @@ def assert_visible_target():
         raise Exception("Target element has no usable selector for assert_visible action.")
     sel = json.dumps(selector)
     visible = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1852,12 +1875,12 @@ def assert_visible_target():
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1866,21 +1889,21 @@ def assert_visible_target():
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
       const el = document.querySelector({sel});
       if (!el) return false;
       const rect = el.getBoundingClientRect();
@@ -1905,7 +1928,7 @@ def assert_checked_target(expected):
     selector = active_target.get("selector") or ""
     sel = json.dumps(selector)
     actual = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1914,12 +1937,12 @@ def assert_checked_target(expected):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1928,21 +1951,21 @@ def assert_checked_target(expected):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
       const root = document.querySelector({sel});
       const el = root && (root.matches('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]')
         ? root
@@ -1961,7 +1984,7 @@ def assert_selected_target(expected):
     selector = active_target.get("selector") or ""
     sel = json.dumps(selector)
     selected = js(f"""(() => {{\n
-      const isDisabled = (el) => {
+      const isDisabled = (el) => {{
         if (!el) return false;
         
         // Native properties and attributes
@@ -1970,12 +1993,12 @@ def assert_selected_target(expected):
         if (el.getAttribute('data-disabled') === 'true') return true;
         
         // Computed styles
-        try {
+        try {{
           const style = window.getComputedStyle(el);
           if (style.pointerEvents === 'none') return true;
           if (style.cursor === 'not-allowed') return true;
           if (style.opacity && parseFloat(style.opacity) < 0.4) return true;
-        } catch (e) {}
+        }} catch (e) {{}}
 
         // Class names
         const c = typeof el.className === 'string' ? el.className.toLowerCase() : '';
@@ -1984,21 +2007,21 @@ def assert_selected_target(expected):
         // Check parents for disabled fieldsets or container-level locks
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && parent !== document.body && depth < 5) {
+        while (parent && parent !== document.body && depth < 5) {{
           if (parent.disabled) return true;
           if (parent.getAttribute('aria-disabled') === 'true') return true;
           const pc = typeof parent.className === 'string' ? parent.className.toLowerCase() : '';
           if (pc.includes('disabled') || pc.includes('locked') || pc.includes('inactive')) return true;
-          try {
+          try {{
             const pStyle = window.getComputedStyle(parent);
             if (pStyle.pointerEvents === 'none') return true;
-          } catch(e) {}
+          }} catch(e) {{}}
           parent = parent.parentElement;
           depth++;
-        }
+        }}
         
         return false;
-      };
+      }};
       const el = document.querySelector({sel});
       if (!el) return null;
       if (el.tagName.toLowerCase() === 'select') {{

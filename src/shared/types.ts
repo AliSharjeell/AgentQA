@@ -129,6 +129,9 @@ export type QaRootCause =
   | "PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED"
   | "GOAL_NOT_REACHED"
   | "REQUIRED_AFFORDANCE_NOT_FOUND"
+  | "CTA_NOT_FOUND"
+  | "REQUIRED_PREREQUISITES_UNRESOLVED"
+  | "NO_PROGRESS"
   | "AMBIGUOUS_STATE"
   | "LLM_PROVIDER_UNAVAILABLE";
 
@@ -330,6 +333,42 @@ export interface QaAcceptanceCriterion {
   assertionIds?: string[];
 }
 
+export interface QaObjectiveMilestone {
+  id: string;
+  label: string;
+  status: QaVerdict;
+  rootCause?: QaRootCause;
+  evidence: string[];
+  message?: string;
+}
+
+export interface QaCompactElementState {
+  id?: string;
+  label: string;
+  selector?: string;
+  role?: string;
+  type?: string;
+  enabled: boolean;
+  bbox?: { x: number; y: number; width?: number; height?: number };
+  text?: string;
+}
+
+export interface QaCompactFinalState {
+  url: string;
+  title: string;
+  scrollY?: number;
+  pageTextExcerpt: string;
+  visibleHeadings: string[];
+  visibleButtons: QaCompactElementState[];
+  visibleLinks: QaCompactElementState[];
+  visibleOptions: QaCompactElementState[];
+  cartIndicators: string[];
+  errorMessages: string[];
+  selectedOptions: string[];
+  disabledOptions: string[];
+  candidateActions: QaCompactElementState[];
+}
+
 export type QaIssueCategory =
   | 'PRODUCT_ISSUE'
   | 'AGENT_ISSUE'
@@ -410,6 +449,8 @@ export interface QaRunResult {
   stats: QaRunStats;
   network_errors?: (string | QaNetworkErrorDetail)[];
   acceptance_criteria: QaAcceptanceCriterion[];
+  objective_milestones?: QaObjectiveMilestone[];
+  compact_final_state?: QaCompactFinalState;
   issues: QaIssue[];
   product_issues?: QaIssue[];
   agent_issues?: QaIssue[];

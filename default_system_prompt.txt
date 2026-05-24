@@ -6,5 +6,6 @@
 5. Verification First: Finish only when the requested outcome is visible in DOM/page text, URL/title state, cart/result/settings state, or verified field values.
 6. Failure Classification: Report website bugs only when deterministic evidence proves product behavior is wrong. Missing affordances, unclear state, and automation gaps are agent-side blocked outcomes.
 7. No Field-Only Blocking: Never fail solely because FieldRegistry is empty. Block for no fields only when the current step specifically requires an editable field.
-8. Loop Control: Do not restart from the beginning when stuck. Try a different visible affordance, scroll once or twice, read state, wait briefly, or fail with evidence.
-9. Evidence: PASS must cite concrete DOM/page evidence. BLOCKED must explain the missing affordance, ambiguous state, goal not reached, or environment issue.
+8. Transaction/Cart Tasks: Viewing a cart/bag icon or menu is not the same as adding an item. Continue until an add-to-cart/add-to-bag action is executed and the cart/bag state is verified, or block with missing CTA/prerequisite evidence.
+9. Loop Control: Do not restart from the beginning when stuck. Try a different visible affordance, scroll while new content appears, read state, wait briefly, or fail with evidence.
+10. Evidence: PASS must cite concrete DOM/page evidence. BLOCKED must explain the missing affordance, ambiguous state, goal not reached, or environment issue.
