@@ -591,7 +591,12 @@ function registerIpc(): void {
       
       const textResponse = json.choices?.[0]?.message?.content || "";
       let batchJson;
-      try { batchJson = JSON.parse(textResponse); } catch(e) {}
+      try { 
+        batchJson = JSON.parse(textResponse);
+        if (Array.isArray(batchJson)) {
+          batchJson = { action: 'batch', actions: batchJson };
+        }
+      } catch(e) {}
       
       if (batchJson && batchJson.action === 'batch' && batchJson.actions?.length > 0) {
         const url = browserView.webContents.getURL();
