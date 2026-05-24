@@ -33,6 +33,7 @@ export interface BuildRunResultInput {
   evidence: string[];
   evidenceWarnings: EvidenceWarning[];
   artifacts: QaRunResult['artifacts'];
+  providerEvents?: import('../shared/types').ProviderRetryEvent[];
 }
 
 export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
@@ -41,9 +42,25 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
   const acceptanceCriteria = buildAcceptanceCriteria(input.plan, input.assertions, stats);
   const issues = buildIssues(input.actions, input.assertions, input.evidenceWarnings, input.artifacts);
   const verdict = decideVerdict(input.llmReport, input.assertions, input.actions, input.evidenceWarnings, stats);
+
+  // Handle provider events - if provider had transient errors but recovered, add warning
+  const providerEvents = input.providerEvents || [];
+  const hasProviderWarnings = providerEvents.length > 0 && providerEvents.some(e => e.recovered);
+  const providerWarnings: string[] = [];
+  if (hasProviderWarnings) {
+    const recovered = providerEvents.filter(e => e.recovered);
+    const uniqueProviders = [...new Set(recovered.map(e => e.provider))];
+    providerWarnings.push(`${uniqueProviders.join(', ')} had transient overload errors but recovered.`);
+  }
+
   if (input.plan.testId === 'TC-FORM-001' && verdict.status === 'PASS') {
     verdict.status = 'PASS_WITH_WARNINGS';
     verdict.severity = 'LOW';
+  }
+  // If provider had warnings and verdict is PASS, upgrade to PASS_WITH_WARNINGS
+  if (hasProviderWarnings && verdict.status === 'PASS') {
+    verdict.status = 'PASS_WITH_WARNINGS';
+    verdict.severity = verdict.severity || 'LOW';
   }
   if (verdict.status === 'PASS' || verdict.status === 'PASS_WITH_WARNINGS') {
     for (const issue of issues) {
@@ -52,8 +69,14 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
         issue.severity = 'MEDIUM';
       }
     }
+    // Don't add provider errors as issues if we recovered
+    if (hasProviderWarnings) {
+      const filteredIssues = issues.filter(issue => issue.category !== 'PROVIDER_ISSUE');
+      issues.length = 0;
+      issues.push(...filteredIssues);
+    }
   }
-  const summary = buildSummary(verdict.status, input.plan, input.llmReport, stats, input.assertions, input.evidenceWarnings);
+  const summary = buildSummary(verdict.status, input.plan, input.llmReport, stats, input.assertions, input.evidenceWarnings, providerWarnings);
 
   const result: QaRunResult = redactValue({
     run_id: input.runId,
@@ -90,7 +113,9 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
       status: input.llmReport?.result,
       reason: 'Raw agent report is unverified and used only as notes.',
       raw_data: input.llmReport || undefined
-    }
+    },
+    provider_events: providerEvents,
+    provider_warnings: providerWarnings
   });
   result.verification_summary = {
     status: result.status,
@@ -255,16 +280,20 @@ function issueBuckets(issues: QaIssue[]): Pick<QaRunResult, 'product_issues' | '
   };
 }
 
-export function writeQaReportFiles(collector: EvidenceCollector, result: QaRunResult): void {
+export function writeQaReportFiles(collector: EvidenceCollector, result: QaRunResult, providerEvents?: import('../shared/types').ProviderRetryEvent[]): void {
   collector.writeJson('result.json', result);
   collector.writeText('report.md', renderMarkdownReport(result));
   collector.writeText('report.html', renderHtmlReport(result));
+  if (providerEvents && providerEvents.length > 0) {
+    collector.writeJson('provider-events.json', providerEvents);
+  }
 }
 
 export function toDesktopReport(input: {
   taskId: string;
   result: QaRunResult;
   stepEvents: Array<{ instruction: string; status: TaskStepStatus; result?: string; error?: string }>;
+  providerEvents?: import('../shared/types').ProviderRetryEvent[];
 }): QaReport {
   return {
     taskId: input.taskId,
@@ -300,6 +329,7 @@ export function toDesktopReport(input: {
     actions: input.result.actions,
     assertions: input.result.assertions,
     artifacts: input.result.artifacts,
+    providerEvents: input.providerEvents,
     evidenceStatus: input.result.evidence_status,
     reproducibleSteps: input.result.reproducible_steps,
     recommendation: input.result.recommendation,
@@ -657,20 +687,23 @@ function buildSummary(
   llmReport: CliReport | null | undefined,
   stats: ExtendedQaRunStats,
   assertions: QaAssertionResult[],
-  evidenceWarnings: EvidenceWarning[]
+  evidenceWarnings: EvidenceWarning[],
+  providerWarnings: string[] = []
 ): string {
   if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') {
     if (plan.testId === 'TC-FORM-001') {
       const warnings = buildPassWarningMessages(plan, stats, evidenceWarnings);
+      const allWarnings = [...warnings, ...providerWarnings];
       return [
         'All visible form fields were filled and verified from the final DOM.',
-        warnings.length ? `Warnings: ${warnings.join(' ')}` : ''
+        allWarnings.length ? `Warnings: ${allWarnings.join(' ')}` : ''
       ].filter(Boolean).join(' ');
     }
     let msg = `Every required assertion was verified. ${stats.assertions_passed}/${stats.assertions_total} assertions passed with evidence.`;
-    if (status === 'PASS_WITH_WARNINGS') {
+    if (status === 'PASS_WITH_WARNINGS' || providerWarnings.length > 0) {
       const warnings = buildPassWarningMessages(plan, stats, evidenceWarnings);
-      msg += warnings.length ? ` Warnings: ${warnings.join(' ')}` : ` ${evidenceWarnings.length + stats.console_errors + stats.network_errors} warning signal(s) were captured.`;
+      const allWarnings = [...warnings, ...providerWarnings];
+      msg += allWarnings.length ? ` Warnings: ${allWarnings.join(' ')}` : ` ${evidenceWarnings.length + stats.console_errors + stats.network_errors} warning signal(s) were captured.`;
     }
     return msg;
   }

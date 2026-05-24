@@ -20,6 +20,19 @@
 
 export type ApiProvider = "openai" | "anthropic";
 
+export interface ProviderRetryEvent {
+  timestamp: string;
+  provider: ApiProvider;
+  model: string;
+  phase: string;
+  attempt: number;
+  status: number;
+  type: string;
+  recovered: boolean;
+  retryAfterMs: number;
+  error?: string;
+}
+
 export type TaskStatus = "todo" | "running" | "done" | "failed" | "paused";
 
 export type TaskStepStatus = "pending" | "running" | "done" | "failed" | "skipped";
@@ -91,7 +104,8 @@ export type QaRootCause =
   | "REPORT_INCONSISTENCY"
   | "VERIFIER_RUNTIME_ERROR"
   | "BROWSER_EVALUATION_ERROR"
-  | "FIELD_REGISTRY_EMPTY";
+  | "FIELD_REGISTRY_EMPTY"
+  | "LLM_PROVIDER_UNAVAILABLE";
 
 export type QaSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
@@ -268,7 +282,8 @@ export type QaIssueCategory =
   | 'VERIFIER_ISSUE'
   | 'TEST_DATA_ISSUE'
   | 'ENVIRONMENT_ISSUE'
-  | 'REPORT_ISSUE';
+  | 'REPORT_ISSUE'
+  | 'PROVIDER_ISSUE';
 
 export interface QaIssue {
   id: string;
@@ -368,6 +383,8 @@ export interface QaRunResult {
     raw_data?: unknown;
   };
   validator_review?: QaValidatorResult;
+  provider_events?: ProviderRetryEvent[];
+  provider_warnings?: string[];
 }
 
 export interface AgentPlanStep {
@@ -554,6 +571,7 @@ export interface QaReport {
   actions?: QaRunAction[];
   assertions?: QaAssertionResult[];
   artifacts?: QaArtifactManifest;
+  providerEvents?: ProviderRetryEvent[];
   evidenceStatus?: QaEvidenceStatus;
   reproducibleSteps?: string[];
   recommendation?: string;

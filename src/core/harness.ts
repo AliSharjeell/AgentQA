@@ -74,7 +74,7 @@ export interface HarnessResult {
 }
 
 export type FaultSeverity = 'critical' | 'major' | 'minor' | 'warning';
-export type FaultType = 'site_bug' | 'validation_issue' | 'console_error' | 'blocked_flow' | 'agent_issue' | 'infra';
+export type FaultType = 'site_bug' | 'validation_issue' | 'console_error' | 'blocked_flow' | 'agent_issue' | 'infra' | 'provider';
 
 export interface QaFault {
   severity: FaultSeverity;

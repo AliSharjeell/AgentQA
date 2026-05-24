@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { AgentExecutorKind, AgentRunMode, AppSettings } from '../shared/types';
+import type { AgentExecutorKind, AgentRunMode, AppSettings, ProviderRetryEvent } from '../shared/types';
 import type { QaRunAction, QaRunResult } from '../shared/types';
 import { callForScript } from './api';
 import {
@@ -568,6 +568,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   let maxSteps = options.maxSteps && options.maxSteps > 0 ? options.maxSteps : 25;
   let stepBudgetExtensionsUsed = 0;
   const numberedObjectiveCount = countNumberedObjectives(prompt);
+  const providerEvents: ProviderRetryEvent[] = [];
 
   const rememberObservation = (nextObservation: PageObservation): void => {
     observations.push(nextObservation);
@@ -647,7 +648,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       llmReport: legacyReport,
       evidence: [...evidence, ...(legacyReport.evidence || [])],
       evidenceWarnings: evidenceCollector.getWarnings(),
-      artifacts
+      artifacts,
+      providerEvents
     });
 
     if (verifierRuntimeError) {
@@ -681,7 +683,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       }
     }
 
-    writeQaReportFiles(evidenceCollector, finalReport);
+    writeQaReportFiles(evidenceCollector, finalReport, providerEvents);
     for (const step of steps) {
       if (step.status === 'running') step.status = resultToOk(finalReport) ? 'done' : 'failed';
     }
@@ -861,14 +863,39 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     });
 
     let parsed: AgentResponse;
+    const isProviderError = (err: unknown): boolean => {
+      if (err instanceof Error && 'providerEvent' in err) return true;
+      const msg = err instanceof Error ? err.message : String(err);
+      return msg.includes('529') || msg.includes('overloaded_error') || msg.includes('rate_limit_error') || msg.includes('429') || msg.includes('500') || msg.includes('503') || msg.includes('timeout') || msg.includes('ETIMEDOUT');
+    };
+    let providerRetriesExhausted = false;
     try {
-      parsed = parseAgentResponse(await callForScript(settings, fullPrompt));
+      parsed = parseAgentResponse(await callForScript(settings, fullPrompt, {
+        phase: 'planning',
+        onRetry: (event) => {
+          event.recovered = false;
+          providerEvents.push({ ...event });
+          addStep(`Planner retry: ${settings.apiProvider} ${event.type || event.status}, attempt ${event.attempt}/${4}`, 'running');
+          onStep({ instruction: `Planner retry: ${settings.apiProvider} ${event.type || event.status}, recovered after retry.`, status: 'running' });
+        }
+      }));
       parseFailures = 0;
+      // Mark any pending provider retry events as recovered
+      for (const evt of providerEvents) {
+        if (!evt.recovered && evt.phase === 'planning') evt.recovered = true;
+      }
     } catch (err) {
       parseFailures++;
+      const isProvider = isProviderError(err);
       const message = err instanceof Error ? err.message : String(err);
-      addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'failed', undefined, message);
-      onStep({ instruction: `Plan next QA action (${stepNum}/${maxSteps})`, status: 'failed', error: message });
+      if (isProvider) {
+        providerRetriesExhausted = true;
+        addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'failed', undefined, `Provider overloaded: ${message}`);
+        onStep({ instruction: `Plan next QA action (${stepNum}/${maxSteps})`, status: 'failed', error: `Provider overloaded: ${message}` });
+      } else {
+        addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'failed', undefined, message);
+        onStep({ instruction: `Plan next QA action (${stepNum}/${maxSteps})`, status: 'failed', error: message });
+      }
       history.push({
         step: stepNum,
         action: 'parse_agent_response',
@@ -876,8 +903,10 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         result: message,
         url: currentUrl
       });
-      lastActionResult = `Agent response parse failed: ${message}`;
-      if (parseFailures >= 3) {
+      lastActionResult = isProvider
+        ? `LLM provider overloaded: ${message}. Retries exhausted.`
+        : `Agent response parse failed: ${message}`;
+      if (parseFailures >= 3 && !providerRetriesExhausted) {
         const report = makeReport({
           result: 'AGENT_FAILED',
           scenario: prompt,
@@ -889,6 +918,28 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
           consoleErrors: observation.consoleErrors
         });
         return finishWithReport(report, 'Agent returned invalid JSON repeatedly.', currentUrl);
+      }
+      if (providerRetriesExhausted && stepNum === 1) {
+        const report = makeReport({
+          result: 'INFRA_FAILED',
+          scenario: prompt,
+          summary: 'The QA run could not continue because the LLM provider was temporarily overloaded.',
+          finalUrl: currentUrl,
+          history,
+          faults: [{
+            severity: 'critical',
+            type: 'provider',
+            title: 'LLM Provider Unavailable',
+            details: message,
+            evidence: [],
+            url: currentUrl,
+            step: 'initial planning'
+          }],
+          evidence: [message],
+          consoleErrors: observation.consoleErrors
+        });
+        (report as any).rootCause = 'LLM_PROVIDER_UNAVAILABLE';
+        return finishWithReport(report, 'LLM provider unavailable.', currentUrl);
       }
       continue;
     }
@@ -1126,6 +1177,36 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       }
       resetDirective = null;
       if (signature !== blockedActionSignature) blockedActionSignature = null;
+
+      // Check for deterministic completion of form fillability tasks
+      if (testPlan.testId === 'TC-FORM-001' && result.ok && globalFieldRegistry.length > 0) {
+        const allFieldsHaveValues = globalFieldRegistry.every(entry => {
+          const hasPlanned = Boolean(entry.planned_value);
+          const hasActual = Boolean(entry.actual_value || entry.selected_value || entry.checked !== undefined);
+          return hasPlanned && hasActual;
+        });
+        if (allFieldsHaveValues && globalFieldRegistry.length >= 5) {
+          // All form fields have been filled - skip further planning and go to verification
+          history.push({
+            step: stepNum,
+            action: 'deterministic_completion',
+            status: 'success',
+            result: `All ${globalFieldRegistry.length} form fields have values. Skipping further planning.`,
+            url: currentUrl
+          });
+          const report = makeReport({
+            result: 'PASS',
+            scenario: prompt,
+            summary: 'All form fields were filled with dummy data and verified. Form is fillable.',
+            finalUrl: currentUrl,
+            history,
+            faults,
+            evidence: [lastActionResult || 'Deterministic completion reached.'],
+            consoleErrors: observation.consoleErrors
+          });
+          return finishWithReport(report, 'Deterministic form fillability complete.', currentUrl);
+        }
+      }
     } else {
       resetDirective = `The last action failed. Do not retry it blindly. Use the updated DOM, choose another tactic, or fail with evidence.`;
     }

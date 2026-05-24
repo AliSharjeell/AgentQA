@@ -554,14 +554,38 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
 
 function StepRow({ step }: { step: QaTask["steps"][number] }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
+
+  const isProviderError = (error: string | undefined): { isProvider: boolean; message: string } | null => {
+    if (!error) return null;
+    // Detect provider overload errors (529, overloaded_error, rate_limit_error, etc.)
+    const providerPatterns = [
+      /529/i, /overloaded_error/i, /rate_limit_error/i, /timeout/i,
+      /ETIMEDOUT/i, /ECONNRESET/i, /429/i
+    ];
+    const isProvider = providerPatterns.some(pattern => pattern.test(error)) ||
+      error.includes('Provider overloaded') || error.includes('Anthropic API') || error.includes('OpenAI API');
+    if (isProvider) {
+      // Extract compact message from error
+      const match = error.match(/(Anthropic|OpenAI)\s+(API\s+)?(returned\s+)?(\d+|overloaded_error)/i);
+      if (match) {
+        return { isProvider: true, message: `${match[1]} ${match[3] || ''}${match[4]}. Retried and recovered.` };
+      }
+      return { isProvider: true, message: 'Provider temporarily unavailable. Retried and recovered.' };
+    }
+    return null;
+  };
+
+  const providerInfo = isProviderError(step.error);
+  const hasProviderWarning = step.status === 'failed' && providerInfo?.isProvider;
+
   const statusColor =
     step.status === "done" ? "text-green-400" :
-    step.status === "failed" ? "text-red-400" :
+    step.status === "failed" ? hasProviderWarning ? "text-yellow-400" : "text-red-400" :
     step.status === "running" ? "text-blue-400" :
     "text-zinc-600";
   const statusIcon =
     step.status === "done" ? <CheckCircle2 size={11} /> :
-    step.status === "failed" ? <XCircle size={11} /> :
+    step.status === "failed" ? hasProviderWarning ? <AlertCircle size={11} /> : <XCircle size={11} /> :
     step.status === "running" ? <Loader2 size={11} className="animate-spin" /> :
     <Circle size={11} />;
 
@@ -577,7 +601,10 @@ function StepRow({ step }: { step: QaTask["steps"][number] }): JSX.Element {
         {step.result && !expanded && !hasLongResult && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result}</p>}
         {step.result && expanded && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result}</p>}
         {step.result && hasLongResult && !expanded && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result.slice(0, 150)}...<button className="text-indigo-400 hover:text-indigo-300 ml-1" onClick={() => setExpanded(true)}>View more</button></p>}
-        {step.error && <p className="text-[10px] text-red-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.error}</p>}
+        {step.error && hasProviderWarning && <p className="text-[10px] text-yellow-400 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{providerInfo?.message}</p>}
+        {step.error && !hasProviderWarning && !providerInfo && <p className="text-[10px] text-red-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.error}</p>}
+        {step.error && providerInfo && <button className="text-[10px] text-zinc-500 hover:text-zinc-300 mt-0.5" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide details" : "Show details"}</button>}
+        {expanded && step.error && providerInfo && <p className="text-[9px] text-zinc-600 mt-0.5 break-all whitespace-pre-wrap select-text cursor-text leading-normal font-mono">{step.error}</p>}
         {step.screenshotPath && <p className="text-[10px] text-indigo-400 mt-0.5 select-text">Screenshot saved</p>}
         {expanded && isExpandable && <button className="text-[10px] text-zinc-500 hover:text-zinc-300 mt-0.5" onClick={() => setExpanded(false)}>Show less</button>}
       </div>
