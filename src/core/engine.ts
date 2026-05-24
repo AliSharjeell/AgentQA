@@ -168,7 +168,8 @@ function describeAction(action: AgentAction, target?: ObservedElement | null): s
     return action.description || `batch ${count} actions`;
   }
   const targetText = target ? ` ${target.id} "${target.description}"` : '';
-  const valueText = action.value ? ` value "${action.value.slice(0, 80)}"` : '';
+  const keyText = action.key ? ` key "${action.key.slice(0, 40)}"` : '';
+  const valueText = action.value ? ` value "${action.value.slice(0, 80)}"` : keyText;
   return `${action.action}${targetText}${valueText}`;
 }
 
@@ -186,6 +187,7 @@ function actionSignature(action: AgentAction): string {
     action.action,
     'targetId' in action ? action.targetId || '' : '',
     'value' in action ? action.value || '' : '',
+    'key' in action ? action.key || '' : '',
     'url' in action ? action.url || '' : '',
     'dy' in action ? action.dy ?? '' : '',
     'seconds' in action ? action.seconds ?? '' : ''
@@ -221,11 +223,21 @@ function targetForId(targetId: string | undefined, observation: PageObservation)
   return observation.availableElements.find((el) => el.id === targetId) || null;
 }
 
+function actionRequiresTarget(action: StructuredAction): boolean {
+  return ['click', 'type', 'select', 'read'].includes(action.action);
+}
+
 function resolveExecutableAction(action: StructuredAction, observation: PageObservation): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
   if (action.action !== 'batch') {
     const target = targetForId(action.targetId, observation);
-    if (['click', 'type', 'read'].includes(action.action) && !target) {
+    if (action.targetId && !target) {
+      return { target: null, error: `Target ${action.targetId} is not available in the current DOM observation.` };
+    }
+    if (actionRequiresTarget(action) && !target) {
       return { target: null, error: `Target ${action.targetId || '(missing)'} is not available in the current DOM observation.` };
+    }
+    if (action.action === 'select' && !action.value) {
+      return { target, error: 'Select action requires value with the option label or value to choose.' };
     }
     return { action, target };
   }
@@ -244,8 +256,14 @@ function resolveExecutableAction(action: StructuredAction, observation: PageObse
       return { target: null, error: `Batch action blocked: nested batch at sub-action ${index + 1}.` };
     }
     const target = targetForId(item.targetId, observation);
-    if (['click', 'type', 'read'].includes(item.action) && !target) {
+    if (item.targetId && !target) {
+      return { target: null, error: `Batch action blocked: target ${item.targetId} is unavailable for sub-action ${index + 1}.` };
+    }
+    if (actionRequiresTarget(item) && !target) {
       return { target: null, error: `Batch action blocked: target ${item.targetId || '(missing)'} is unavailable for sub-action ${index + 1}.` };
+    }
+    if (item.action === 'select' && !item.value) {
+      return { target: null, error: `Batch action blocked: select sub-action ${index + 1} requires value.` };
     }
     resolvedSubactions.push({ ...item, _target: target });
   }
@@ -809,7 +827,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       action: action.action,
       targetId: action.targetId,
       targetDescription: target?.description,
-      value: action.value || action.url || String(action.dy ?? action.seconds ?? ''),
+      value: action.value || action.key || action.url || String(action.dy ?? action.seconds ?? ''),
       status: result.ok ? (action.action === 'read' ? 'read' : 'success') : 'failed',
       result: actionResult,
       url: currentUrl
@@ -819,7 +837,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     if (result.ok) {
       if (action.action === 'scroll') {
         scrollStreak++;
-      } else if (['click', 'type', 'navigate', 'batch'].includes(action.action)) {
+      } else if (['click', 'type', 'select', 'press_key', 'navigate', 'batch'].includes(action.action)) {
         scrollStreak = 0;
         blockedScrollAttempts = 0;
       }

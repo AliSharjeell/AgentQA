@@ -53,6 +53,12 @@ export interface ObservedElement {
   description: string;
   value?: string | null;
   text?: string;
+  options?: Array<{
+    value: string;
+    label: string;
+    selected?: boolean;
+    disabled?: boolean;
+  }>;
   tag: string;
   selector: string;
   href?: string;
@@ -65,6 +71,7 @@ export interface ObservedElement {
   disabled?: boolean;
   checked?: boolean;
   selected?: boolean;
+  expanded?: boolean;
 }
 
 export interface PageObservation {
@@ -85,12 +92,13 @@ export interface PageObservation {
   consoleErrors: string[];
 }
 
-export type StructuredActionName = 'click' | 'type' | 'read' | 'scroll' | 'wait' | 'navigate' | 'batch';
+export type StructuredActionName = 'click' | 'type' | 'select' | 'press_key' | 'read' | 'scroll' | 'wait' | 'navigate' | 'batch';
 
 export interface StructuredAction {
   action: StructuredActionName;
   targetId?: string;
   value?: string;
+  key?: string;
   url?: string;
   dy?: number;
   seconds?: number;
@@ -241,28 +249,212 @@ function browserNameFor(cdpUrl: string, managed: boolean): string {
   return `agentqa-${Buffer.from(cdpUrl).toString('base64url').slice(0, 24)}`;
 }
 
-// The set_value Python preamble that gets prepended to every script.
-// Uses JavaScript to set input values progressively, making it observable in live preview and bypassing Electron's CDP double-typing bug.
+// The form-control Python preamble that gets prepended to every script.
+// Uses JavaScript for normal text input to avoid Electron's CDP double-typing bug.
 const SET_VALUE_PREAMBLE = `
 import json as _json
 import time as _time
 
 def set_value(selector, text):
-    """Set an input's value progressively via JavaScript — works in React, Vue, and vanilla HTML."""
+    """Set text on inputs, textareas, contenteditable nodes, or editable descendants."""
     _sel = _json.dumps(selector)
     _val = _json.dumps(text)
-    js(f"""(() => {{
+    result = js(f"""(() => {{
         const el = document.querySelector({_sel});
         if (!el) throw new Error('set_value: element not found: ' + {_sel});
-        const proto = Object.getPrototypeOf(el);
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
-            || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-            || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-        if (descriptor && descriptor.set) descriptor.set.call(el, {_val});
-        else el.value = {_val};
+        const excludedInputTypes = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+        const roleOf = (node) => String(node.getAttribute('role') || '').toLowerCase();
+        const isTextInput = (node) => {{
+            const tag = node.tagName.toLowerCase();
+            const type = String(node.getAttribute('type') || '').toLowerCase();
+            return tag === 'textarea' || (tag === 'input' && !excludedInputTypes.has(type));
+        }};
+        const isEditable = (node) => {{
+            const role = roleOf(node);
+            return isTextInput(node) || node.isContentEditable || role === 'textbox' || role === 'searchbox' || (role === 'combobox' && isTextInput(node));
+        }};
+        const editable = isEditable(el)
+            ? el
+            : el.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]), textarea, [contenteditable], [role="textbox"], [role="searchbox"], [role="combobox"] input');
+        if (!editable) throw new Error('set_value: no editable target for ' + {_sel});
+        editable.scrollIntoView({{ block: 'center', inline: 'center' }});
+        try {{ editable.focus({{ preventScroll: true }}); }} catch (_) {{ editable.focus(); }}
+        const tag = editable.tagName.toLowerCase();
+        const role = roleOf(editable);
+        const useTextContent = editable.isContentEditable || (!('value' in editable) && (role === 'textbox' || role === 'searchbox'));
+        if (useTextContent) {{
+            editable.textContent = {_val};
+            try {{
+                const range = document.createRange();
+                range.selectNodeContents(editable);
+                range.collapse(false);
+                const selection = window.getSelection();
+                if (selection) {{
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                }}
+            }} catch (_) {{}}
+        }} else {{
+            const proto = Object.getPrototypeOf(editable);
+            const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
+                || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+                || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+            if (descriptor && descriptor.set) descriptor.set.call(editable, {_val});
+            else editable.value = {_val};
+        }}
+        try {{
+            editable.dispatchEvent(new InputEvent('input', {{ bubbles: true, cancelable: true, inputType: 'insertText', data: {_val} }}));
+        }} catch (_) {{
+            editable.dispatchEvent(new Event('input', {{ bubbles: true }}));
+        }}
+        editable.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        editable.dispatchEvent(new KeyboardEvent('keyup', {{ bubbles: true, key: '', code: '' }}));
+        const actual = ('value' in editable)
+            ? String(editable.value || '')
+            : String(editable.innerText || editable.textContent || '').replace(/\\s+/g, ' ').trim();
+        const expected = String({_val});
+        if (actual !== expected) {{
+            const normActual = actual.replace(/\\s+/g, ' ').trim();
+            const normExpected = expected.replace(/\\s+/g, ' ').trim();
+            if (normActual !== normExpected) throw new Error('set_value: value verification failed. Expected "' + expected + '" but found "' + actual + '".');
+        }}
+        return {{ ok: true, tag, role, actual }};
+    }})()""")
+    if not result or not result.get("ok"):
+        raise Exception("set_value: value update failed for " + selector)
+    return result
+
+def click_element(selector, fallback_x=None, fallback_y=None):
+    """Click an element with real pointer/mouse events at its center."""
+    _sel = _json.dumps(selector)
+    pos = js(f"""(() => {{
+        const el = document.querySelector({_sel});
+        if (!el) return null;
+        el.scrollIntoView({{ block: 'center', inline: 'center' }});
+        const rect = el.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        return {{ x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }};
+    }})()""")
+    if not pos:
+        if fallback_x is None or fallback_y is None:
+            raise Exception("click_element: element not found or not clickable: " + selector)
+        pos = {"x": fallback_x, "y": fallback_y}
+    click_at_xy(int(pos["x"]), int(pos["y"]))
+    _time.sleep(0.08)
+    return pos
+
+def select_option(selector, text):
+    """Select a native select option or a visible custom ARIA/menu option by text/value."""
+    _sel = _json.dumps(selector)
+    _val = _json.dumps(str(text or ""))
+    native = js(f"""(() => {{
+        const el = document.querySelector({_sel});
+        if (!el) throw new Error('select_option: element not found: ' + {_sel});
+        if (el.tagName.toLowerCase() !== 'select') return null;
+        const expected = String({_val});
+        const want = expected.replace(/\\s+/g, ' ').trim().toLowerCase();
+        if (!want) throw new Error('select_option: option text/value is required.');
+        const options = Array.from(el.options).map((option, index) => ({{
+            option,
+            index,
+            value: String(option.value || ''),
+            label: String(option.label || option.textContent || '').replace(/\\s+/g, ' ').trim(),
+            disabled: Boolean(option.disabled)
+        }})).filter(item => !item.disabled);
+        const choose = (items) => {{
+            if (items.length === 1) return items[0];
+            if (items.length > 1) throw new Error('select_option: ambiguous native option match for "' + expected + '": ' + items.map(item => item.label || item.value).join(', '));
+            return null;
+        }};
+        let match =
+            choose(options.filter(item => item.value === expected)) ||
+            choose(options.filter(item => item.label === expected)) ||
+            choose(options.filter(item => item.value.replace(/\\s+/g, ' ').trim().toLowerCase() === want)) ||
+            choose(options.filter(item => item.label.replace(/\\s+/g, ' ').trim().toLowerCase() === want)) ||
+            choose(options.filter(item => item.value.replace(/\\s+/g, ' ').trim().toLowerCase().includes(want) || item.label.replace(/\\s+/g, ' ').trim().toLowerCase().includes(want)));
+        if (!match) throw new Error('select_option: no native option matched "' + expected + '". Available: ' + options.map(item => item.label || item.value).join(', '));
+        el.selectedIndex = match.index;
+        el.value = match.option.value;
         el.dispatchEvent(new Event('input', {{ bubbles: true }}));
         el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-        el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+        return {{ ok: true, mode: 'native', label: match.label, value: String(el.value || '') }};
+    }})()""")
+    if native:
+        return native
+
+    click_element(selector)
+    _time.sleep(0.2)
+    option = js(f"""(() => {{
+        const target = document.querySelector({_sel});
+        const expected = String({_val});
+        const want = expected.replace(/\\s+/g, ' ').trim().toLowerCase();
+        if (!want) return {{ error: 'select_option: option text/value is required.' }};
+        const visible = (node) => {{
+            const rect = node.getBoundingClientRect();
+            const style = window.getComputedStyle(node);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+        }};
+        const norm = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        const labelFor = (node) => String(
+            node.getAttribute('aria-label') ||
+            node.innerText ||
+            node.textContent ||
+            node.getAttribute('data-value') ||
+            node.getAttribute('value') ||
+            ''
+        ).replace(/\\s+/g, ' ').trim();
+        const optionSelector = '[role="option"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[data-value],[data-radix-collection-item],[cmdk-item],li,button';
+        const nodes = [];
+        const seen = new Set();
+        const addNode = (node) => {{
+            if (!node || seen.has(node) || node === target || !visible(node)) return;
+            seen.add(node);
+            const disabled = node.disabled || node.getAttribute('aria-disabled') === 'true' || node.getAttribute('data-disabled') === 'true';
+            const label = labelFor(node);
+            if (!label || disabled) return;
+            nodes.push({{ node, label, value: String(node.getAttribute('data-value') || node.getAttribute('value') || '') }});
+        }};
+        const controlledIds = target ? String(target.getAttribute('aria-controls') || target.getAttribute('aria-owns') || '').split(/\\s+/).filter(Boolean) : [];
+        for (const id of controlledIds) {{
+            const container = document.getElementById(id);
+            if (container) Array.from(container.querySelectorAll(optionSelector)).forEach(addNode);
+        }}
+        Array.from(document.querySelectorAll(optionSelector)).forEach(addNode);
+        const choose = (items) => {{
+            if (items.length === 1) return items[0];
+            if (items.length > 1) return {{ error: 'select_option: ambiguous custom option match for "' + expected + '": ' + items.slice(0, 8).map(item => item.label).join(', ') }};
+            return null;
+        }};
+        let match =
+            choose(nodes.filter(item => item.value === expected)) ||
+            choose(nodes.filter(item => item.label === expected)) ||
+            choose(nodes.filter(item => norm(item.value) === want)) ||
+            choose(nodes.filter(item => norm(item.label) === want)) ||
+            choose(nodes.filter(item => norm(item.value).includes(want) || norm(item.label).includes(want)));
+        if (!match) return {{ error: 'select_option: no visible custom option matched "' + expected + '". Visible options: ' + nodes.slice(0, 20).map(item => item.label).join(', ') }};
+        if (match.error) return match;
+        match.node.scrollIntoView({{ block: 'center', inline: 'center' }});
+        const rect = match.node.getBoundingClientRect();
+        return {{ ok: true, mode: 'custom', label: match.label, value: match.value, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }};
+    }})()""")
+    if not option or option.get("error"):
+        raise Exception(option.get("error") if option else "select_option: option lookup failed.")
+    click_at_xy(int(option["x"]), int(option["y"]))
+    _time.sleep(0.15)
+    return option
+
+def focus_target(selector):
+    _sel = _json.dumps(selector)
+    return js(f"""(() => {{
+        const root = document.querySelector({_sel});
+        if (!root) return false;
+        const editable = root.matches('input,textarea,[contenteditable],[role="textbox"],[role="searchbox"]')
+            ? root
+            : root.querySelector('input,textarea,[contenteditable],[role="textbox"],[role="searchbox"]');
+        const el = editable || root;
+        el.scrollIntoView({{ block: 'center', inline: 'center' }});
+        try {{ el.focus({{ preventScroll: true }}); }} catch (_) {{ el.focus(); }}
+        return true;
     }})()""")
 
 `;
@@ -466,11 +658,30 @@ function buildDomSnapshotPython(): string {
         }
         return path.join(' > ');
       };
+      const labelledText = (el) => {
+        const ids = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean);
+        const text = ids
+          .map(id => document.getElementById(id))
+          .filter(Boolean)
+          .map(node => node.innerText || node.textContent || '')
+          .join(' ')
+          .replace(/\\s+/g, ' ')
+          .trim();
+        if (text) return text;
+        const id = el.getAttribute('id');
+        if (id) {
+          const label = document.querySelector('label[for="' + cssEscape(id) + '"]');
+          if (label) return (label.innerText || label.textContent || '').replace(/\\s+/g, ' ').trim();
+        }
+        const wrappingLabel = el.closest('label');
+        return wrappingLabel ? (wrappingLabel.innerText || wrappingLabel.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+      };
       const describe = (el) => {
         const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const stableName = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.id || el.getAttribute('name') || '';
         const base = (
           el.getAttribute('aria-label') ||
+          labelledText(el) ||
           el.getAttribute('title') ||
           el.getAttribute('placeholder') ||
           text ||
@@ -489,6 +700,7 @@ function buildDomSnapshotPython(): string {
         const tag = el.tagName.toLowerCase();
         const role = el.getAttribute('role') || '';
         const inputType = (el.getAttribute('type') || '').toLowerCase();
+        if (role === 'searchbox' || role === 'textbox' || role === 'combobox' || role === 'listbox' || role === 'option' || role.startsWith('menuitem')) return role;
         if (tag === 'input' || tag === 'textarea') return inputType || 'input';
         if (tag === 'select') return 'select';
         if (tag === 'button' || role === 'button') return 'button';
@@ -496,8 +708,39 @@ function buildDomSnapshotPython(): string {
         if (role) return role;
         return tag;
       };
+      const optionsFor = (el) => {
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute('role') || '';
+        if (tag === 'select') {
+          return Array.from(el.options).slice(0, 40).map(option => ({
+            value: String(option.value || ''),
+            label: String(option.label || option.textContent || '').replace(/\\s+/g, ' ').trim(),
+            selected: Boolean(option.selected),
+            disabled: Boolean(option.disabled)
+          }));
+        }
+        if (role === 'listbox' || role === 'menu') {
+          return Array.from(el.querySelectorAll('[role="option"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[data-value]')).slice(0, 40).map(option => ({
+            value: String(option.getAttribute('data-value') || option.getAttribute('value') || ''),
+            label: String(option.getAttribute('aria-label') || option.innerText || option.textContent || '').replace(/\\s+/g, ' ').trim(),
+            selected: Boolean(option.getAttribute('aria-selected') === 'true' || option.getAttribute('data-state') === 'checked'),
+            disabled: Boolean(option.getAttribute('aria-disabled') === 'true' || option.getAttribute('data-disabled') === 'true')
+          })).filter(option => option.label || option.value);
+        }
+        const controls = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+        const controlled = controls.split(/\\s+/).map(id => document.getElementById(id)).find(Boolean);
+        if (controlled) {
+          return Array.from(controlled.querySelectorAll('[role="option"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[data-value]')).slice(0, 40).map(option => ({
+            value: String(option.getAttribute('data-value') || option.getAttribute('value') || ''),
+            label: String(option.getAttribute('aria-label') || option.innerText || option.textContent || '').replace(/\\s+/g, ' ').trim(),
+            selected: Boolean(option.getAttribute('aria-selected') === 'true' || option.getAttribute('data-state') === 'checked'),
+            disabled: Boolean(option.getAttribute('aria-disabled') === 'true' || option.getAttribute('data-disabled') === 'true')
+          })).filter(option => option.label || option.value);
+        }
+        return undefined;
+      };
 
-      const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[tabindex],label'));
+      const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[contenteditable],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="combobox"],[role="listbox"],[role="option"],[role="menu"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="textbox"],[role="searchbox"],[aria-haspopup],[aria-expanded],[tabindex],label'));
       const elements = [];
       let idx = 0;
       for (const el of nodes) {
@@ -507,12 +750,15 @@ function buildDomSnapshotPython(): string {
         if (!visible) continue;
         const description = describe(el);
         if (!description && !['input', 'textarea', 'select'].includes(el.tagName.toLowerCase())) continue;
-        const value = 'value' in el ? String(el.value || '') : null;
+        const value = 'value' in el
+          ? String(el.value || '')
+          : (el.isContentEditable ? String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim() : null);
         elements.push({
           id: 'elem_' + idx++,
           type: typeFor(el),
           description: description.slice(0, 160),
           value,
+          options: optionsFor(el),
           text: (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 160),
           tag: el.tagName.toLowerCase(),
           selector: selectorFor(el),
@@ -525,7 +771,8 @@ function buildDomSnapshotPython(): string {
           visible: true,
           disabled: Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true'),
           checked: Boolean(el.checked || el.getAttribute('aria-checked') === 'true'),
-          selected: Boolean(el.selected || el.getAttribute('aria-selected') === 'true')
+          selected: Boolean(el.selected || el.getAttribute('aria-selected') === 'true'),
+          expanded: el.getAttribute('aria-expanded') === 'true' ? true : el.getAttribute('aria-expanded') === 'false' ? false : undefined
         });
         if (elements.length >= 140) break;
       }
@@ -625,31 +872,10 @@ def click_target():
     if not active_target:
         raise Exception("Target element is required for click action.")
     selector = active_target.get("selector") or ""
-    pos = None
     if selector:
-        sel = json.dumps(selector)
-        clicked = js(f"""(() => {{
-          const el = document.querySelector({sel});
-          if (!el) return false;
-          el.scrollIntoView({{block: 'center', inline: 'center'}});
-          if (typeof el.click === 'function') {{
-            el.click();
-            return true;
-          }}
-          el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
-          return true;
-        }})()""")
-        if clicked:
-            return
-        pos = js(f"""(() => {{
-          const el = document.querySelector({sel});
-          if (!el) return null;
-          const rect = el.getBoundingClientRect();
-          return {{x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2)}};
-        }})()""")
-    if not pos:
-        pos = {"x": active_target.get("x", 0), "y": active_target.get("y", 0)}
-    click_at_xy(int(pos["x"]), int(pos["y"]))
+        click_element(selector, active_target.get("x", 0), active_target.get("y", 0))
+        return
+    click_at_xy(int(active_target.get("x", 0)), int(active_target.get("y", 0)))
 
 def type_target(value):
     active_target = action.get("_target") or target
@@ -659,6 +885,26 @@ def type_target(value):
     if not selector:
         raise Exception("Target element has no usable selector for type action.")
     set_value(selector, str(value or ""))
+
+def select_target(value):
+    active_target = action.get("_target") or target
+    if not active_target:
+        raise Exception("Target element is required for select action.")
+    selector = active_target.get("selector") or ""
+    if not selector:
+        raise Exception("Target element has no usable selector for select action.")
+    result = select_option(selector, str(value or ""))
+    label = result.get("label") or result.get("value") or value
+    return "Selected " + str(label)
+
+def press_key_target(value):
+    active_target = action.get("_target") or target
+    selector = (active_target or {}).get("selector") or ""
+    if selector:
+        focus_target(selector)
+    key = str(action.get("key") or value or "Enter")
+    press_key(key)
+    return "Pressed " + key
 
 def read_target():
     active_target = action.get("_target") or target
@@ -688,6 +934,10 @@ def execute_one(item):
     elif kind == "type":
         type_target(item.get("value", ""))
         result = "Typed into " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
+    elif kind == "select":
+        result = select_target(item.get("value", ""))
+    elif kind == "press_key":
+        result = press_key_target(item.get("key") or item.get("value", "Enter"))
     elif kind == "read":
         result = read_target()
     elif kind == "scroll":

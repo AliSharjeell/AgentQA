@@ -63,10 +63,12 @@ function summarizeElements(observation: PageObservation): string {
         el.disabled ? 'disabled' : '',
         el.checked ? 'checked' : '',
         el.selected ? 'selected' : '',
+        typeof el.expanded === 'boolean' ? `expanded=${el.expanded}` : '',
         el.selector ? `selector=${el.selector.slice(0, 90)}` : '',
         el.classes && !el.description.includes(el.classes) ? `class=${el.classes.slice(0, 80)}` : '',
         el.href ? `href=${el.href.slice(0, 120)}` : '',
-        el.value ? `value=${String(el.value).slice(0, 80)}` : ''
+        el.value ? `value=${String(el.value).slice(0, 80)}` : '',
+        el.options?.length ? `options=${el.options.map((option) => `${option.selected ? '*' : ''}${option.label || option.value}`).filter(Boolean).slice(0, 12).join(' | ').slice(0, 240)}` : ''
       ].filter(Boolean).join(', ');
       return `- ${el.id} (${el.type}): "${el.description}"${flags ? ` [${flags}]` : ''}`;
     })
@@ -145,6 +147,8 @@ QA result classification:
 Action protocol:
 - click: requires targetId.
 - type: requires targetId and value.
+- select: requires targetId and value. Use for native <select>, comboboxes, dropdowns, listboxes, and menu/list choices when the desired option text/value is known.
+- press_key: use value or key for special keys only, such as Enter, Escape, Tab, ArrowDown, ArrowUp. Do not use for normal text entry.
 - read: requires targetId.
 - scroll: use dy, negative scrolls down in browser-harness.
 - wait: use seconds, max 10.
@@ -159,6 +163,9 @@ Important:
 - If the task contains a numbered checklist, every numbered item must be completed or explicitly failed before PASS.
 - Do not restart the task from the beginning when stuck.
 - Prefer a high-confidence batch for obvious forms with all required fields and submit button visible. Include "confidence": 0.90 or higher. If not that certain, use one action.
+- For native select elements with listed options, use select with the exact visible option label or option value.
+- For custom dropdowns/comboboxes, click or select the control, then observe/select a visible role=option/menuitem/list option. If the popup has a search field, type into the searchbox/textbox first and press_key Enter only when that is how the widget confirms.
+- For popup search inputs, type only into the visible input/searchbox/textbox/contenteditable target. If typing does not change its value/text in the next observation, choose another visible editable target or fail as AGENT_FAILED with evidence.
 - Do not keep scrolling as a search strategy. After two scrolls without finding a useful visible target, choose a different tactic or fail with evidence.
 - Do not ask to switch executors unless recent action results show repeated failures or an executor limitation.
 - When close to the step limit, do not rush a false PASS. The harness may separately ask for a bounded step extension if the task is clearly near completion.
@@ -176,9 +183,10 @@ Return exactly this JSON shape:
     { "step": 2, "description": "Current work", "status": "CURRENT" }
   ],
   "activePhase": {
-    "action": "click | type | read | scroll | wait | navigate | batch | request_executor_switch | finish_task | fail_task",
+    "action": "click | type | select | press_key | read | scroll | wait | navigate | batch | request_executor_switch | finish_task | fail_task",
     "targetId": "elem_0 when needed",
     "value": "text when needed",
+    "key": "Enter when action is press_key",
     "url": "url when action is navigate",
     "dy": -650,
     "seconds": 1,
