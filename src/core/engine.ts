@@ -1549,10 +1549,9 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     const beforeActionObservation = observation;
     let result = await executor.execute(executableAction, target);
 
+    const targetStr = [target?.description, target?.id, target?.selector, target?.text].join(' ').toLowerCase();
     const isCaptchaTickbox = action.action === 'click' && target && (
-       target.description?.toLowerCase().includes('robot') || 
-       target.id?.toLowerCase().includes('recaptcha') ||
-       target.selector?.toLowerCase().includes('recaptcha')
+       targetStr.includes('robot') || targetStr.includes('recaptcha')
     );
 
     if (isCaptchaTickbox && settings.enableCaptchaSolver && settings.groqApiKey) {
