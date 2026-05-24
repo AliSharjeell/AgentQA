@@ -44,9 +44,9 @@ AgentQA operates directly on the DOM, making it compatible with any website or s
 If you prefer to run AgentQA using the React/Electron graphical desktop app with a live visual browser preview:
 
 * Download the installer for your operating system from the [GitHub Releases Page](https://github.com/AliSharjeell/AgentQA/releases).
-  * **Windows**: `AgentQA Setup 0.1.7.exe`
-  * **macOS**: `AgentQA-0.1.7.dmg` (Apple Silicon & Intel)
-  * **Linux**: `AgentQA-0.1.7.AppImage` (Ubuntu, Debian, etc.)
+  * **Windows**: `AgentQA Setup 0.1.8.exe`
+  * **macOS**: `AgentQA-0.1.8.dmg` (Apple Silicon & Intel)
+  * **Linux**: `AgentQA-0.1.8.AppImage` (Ubuntu, Debian, etc.)
 
 ---
 
@@ -282,12 +282,16 @@ To make browser actions clear and observable in the live preview window:
 - **Shared engine** — `src/core/` has zero Electron imports.
 - **Step budget extension** — When the agent hits its step limit near completion, a secondary LLM can grant a bounded 1–15 step extension on high-confidence near-completion tasks.
 
-## What's New (v0.1.7)
+## What's New (v0.1.8)
 
-- **Hybrid executor mode** — Seamless switching between `standard` and `hybrid` execution modes mid-run, using a secondary LLM to decide when to switch.
-- **Batch harness actions** — Reduced LLM calls by batching multiple element actions into single script executions, improving throughput.
-- **Stabilized harness loop & fault reporting** — Improved retry logic and fault classification for more reliable step recovery.
-- **Bounded step budget extension** — Agent can request a small step extension when clearly near completion (approved once per run, confidence-gated).
+- **Simplified task composer** - streamlined task creation experience with improved workflow
+- **Improved QA probe reporting** - better visibility and insights into test execution
+- **Enhanced task UI** - more intuitive task management interface for better productivity
+- **Light theme enforcement** - prevents sites from inheriting OS dark mode, ensuring consistent visual experience across all websites
+- **General QA agent** - evolved from form-only to full-featured automation handling checkboxes, dropdowns, and JavaScript alerts
+- **Element registry** with intent detection - intelligent element identification
+- **Better harness observation** and state management
+- **Improved DOM inspection** and browser action planning
 
 ---
 
