@@ -478,6 +478,83 @@ function registerIpc(): void {
     browserView?.webContents.reload();
   });
 
+  ipcMain.handle("browser:captureScreenshot", async () => {
+    if (!browserView) return null;
+    const image = await browserView.webContents.capturePage();
+    // Compress to JPEG to avoid Groq base64 URL size limits (often throws "invalid base64 url")
+    return `data:image/jpeg;base64,${image.toJPEG(80).toString("base64")}`;
+  });
+
+  // ── Experimental ──
+  ipcMain.handle("experimental:testGroqCaptcha", async (_, base64Image: string | null, groqKey?: string) => {
+    // If no key provided via args, attempt to read from saved settings as fallback
+    let apiKey = groqKey;
+    if (!apiKey) {
+      try {
+        const settingsPath = path.join(app.getPath("userData"), "agentqa-settings.json");
+        if (fs.existsSync(settingsPath)) {
+          const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+          apiKey = settings.groqApiKey;
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+    if (!apiKey) {
+      return { ok: false, text: "No Groq API Key provided. Please add it in Settings." };
+    }
+
+    try {
+      const messages: any[] = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "You are a captcha solving agent for a browser automation tool. Analyze this image. If you see a captcha, return a strict JSON array of actions to take. Possible actions: {\"action\":\"click\",\"coordinates\":[x,y]}, {\"action\":\"type\",\"text\":\"xyz\"}. Return ONLY JSON, no markdown."
+            }
+          ]
+        }
+      ];
+
+      let finalBase64 = base64Image;
+      if (!finalBase64 && browserView) {
+        const image = await browserView.webContents.capturePage();
+        finalBase64 = `data:image/jpeg;base64,${image.toJPEG(80).toString("base64")}`;
+      }
+
+      if (finalBase64) {
+        messages[0].content.push({
+          type: "image_url",
+          image_url: { url: finalBase64 }
+        });
+      }
+
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages,
+          temperature: 1,
+          max_completion_tokens: 1024,
+          top_p: 1
+        })
+      });
+      
+      const json = await res.json();
+      if (!res.ok) {
+        return { ok: false, text: `Error ${res.status}: ${JSON.stringify(json)}` };
+      }
+      return { ok: true, text: json.choices?.[0]?.message?.content || JSON.stringify(json) };
+    } catch (err) {
+      return { ok: false, text: String(err) };
+    }
+  });
+
   ipcMain.handle("browser:back", () => {
     browserView?.webContents.goBack();
   });

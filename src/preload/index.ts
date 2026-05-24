@@ -29,6 +29,8 @@ const api: QaApi = {
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   testApiConnection: (url, method, headers, body) =>
     ipcRenderer.invoke("testApiConnection", url, method, headers, body),
+  testGroqCaptcha: (base64Image, groqKey) =>
+    ipcRenderer.invoke("experimental:testGroqCaptcha", base64Image, groqKey),
 
   // ── Browser ──
   getBrowserState: () => ipcRenderer.invoke("browser:state"),

@@ -42,6 +42,7 @@ export interface PromptInput {
   currentExecutor?: AgentExecutorKind;
   allowEscalation?: boolean;
   objectiveProgress?: QaObjectiveProgress;
+  settings?: any;
 }
 
 function getCoreBehaviourRules(): string {
@@ -72,12 +73,12 @@ function summarizeFields(observation: PageObservation): string {
     .slice(0, 80)
     .map((field) => {
       const flags = [
-        field.value ? `value=${String(field.value).slice(0, 80)}` : '',
+        field.value ? `value=${String(field.value).slice(0, 80)}` : 'value=EMPTY',
         field.selected_label ? `selected=${field.selected_label}` : '',
-        typeof field.checked === 'boolean' ? `checked=${field.checked}` : '',
+        typeof field.checked === 'boolean' ? (field.checked ? 'CHECKED' : 'UNCHECKED') : '',
         field.selector ? `selector=${field.selector.slice(0, 90)}` : ''
       ].filter(Boolean).join(', ');
-      return `- ${field.temporary_observation_id} / ${field.field_id} (${field.type}): "${field.label}"${flags ? ` [${flags}]` : ''}`;
+      return `- ${field.temporary_observation_id} / ${field.field_id} (${field.type.toUpperCase()}): "${field.label}"${flags ? ` [${flags}]` : ' [READY]'}`;
     })
     .join('\n') || 'No editable fields detected.';
 }
@@ -87,23 +88,45 @@ function summarizeElements(observation: PageObservation): string {
     .slice(0, 100)
     .map((el) => {
       const flags = [
-        el.disabled ? 'disabled' : '',
-        el.checked ? 'checked' : '',
-        el.selected ? 'selected' : '',
-        typeof el.expanded === 'boolean' ? `expanded=${el.expanded}` : '',
+        el.disabled ? 'LOCKED/DISABLED' : (['button', 'link', 'card'].includes(el.type) ? 'CLICKABLE/UNLOCKED' : ''),
+        el.checked ? 'CHECKED' : '',
+        el.selected ? 'SELECTED' : '',
+        typeof el.expanded === 'boolean' ? (el.expanded ? 'EXPANDED' : 'COLLAPSED') : '',
         el.selector ? `selector=${el.selector.slice(0, 90)}` : '',
         el.classes && !el.description.includes(el.classes) ? `class=${el.classes.slice(0, 80)}` : '',
         el.href ? `href=${el.href.slice(0, 120)}` : '',
         el.value ? `value=${String(el.value).slice(0, 80)}` : '',
         el.options?.length ? `options=${el.options.map((option) => `${option.selected ? '*' : ''}${option.label || option.value}`).filter(Boolean).slice(0, 12).join(' | ').slice(0, 240)}` : ''
       ].filter(Boolean).join(', ');
-      return `- ${el.id} (${el.type}): "${el.description}"${flags ? ` [${flags}]` : ''}`;
+      return `- ${el.id} (${el.type.toUpperCase()}): "${el.description}"${flags ? ` [${flags}]` : ''}`;
     })
     .join('\n') || 'No interactable elements detected.';
 }
 
 function summarizeHistory(history: AgentHistoryEntry[]): string {
-  return history
+  if (history.length === 0) return 'None';
+  
+  const keepRecent = 6;
+  if (history.length <= keepRecent + 2) {
+    return history
+      .map((entry) => {
+        const target = entry.targetId ? ` ${entry.targetId}` : '';
+        const value = entry.value ? ` value="${entry.value.slice(0, 80)}"` : '';
+        const thoughtStr = entry.thought ? `\n   Reasoning: ${entry.thought}` : '';
+        const summaryStr = entry.pageSummary ? `\n   Page Context: ${entry.pageSummary}` : '';
+        return `${entry.step}. ${entry.action}${target}${value} -> ${entry.status}: ${entry.result}${thoughtStr}${summaryStr}`;
+      })
+      .join('\n');
+  }
+
+  // Compact older history
+  const compacted = history.slice(0, history.length - keepRecent);
+  const recent = history.slice(history.length - keepRecent);
+
+  const compactedSummary = `[... Compacting memory: ${compacted.length} older steps condensed ...]\n` +
+    compacted.map(e => `${e.step}.${e.action}(${e.targetId || ''})->${e.status === 'success' ? 'OK' : 'FAIL'}`).join(' | ');
+
+  const recentSummary = recent
     .map((entry) => {
       const target = entry.targetId ? ` ${entry.targetId}` : '';
       const value = entry.value ? ` value="${entry.value.slice(0, 80)}"` : '';
@@ -111,7 +134,9 @@ function summarizeHistory(history: AgentHistoryEntry[]): string {
       const summaryStr = entry.pageSummary ? `\n   Page Context: ${entry.pageSummary}` : '';
       return `${entry.step}. ${entry.action}${target}${value} -> ${entry.status}: ${entry.result}${thoughtStr}${summaryStr}`;
     })
-    .join('\n') || 'None';
+    .join('\n');
+
+  return compactedSummary + '\n...\n' + recentSummary;
 }
 
 function summarizePlan(plan: AgentPlanStep[]): string {
@@ -220,6 +245,7 @@ Action protocol:
 - wait: use seconds, max 10.
 - assert_text/assert_url/assert_visible/assert_value/assert_checked/assert_selected/assert_count: use when the expected final state is known. Assertion failures are website bugs only when the expected behavior is clear.
 - screenshot: requires an output path value. Prefer letting the engine collect standard evidence screenshots automatically.
+${input.settings?.enableCaptchaSolver && input.settings?.groqApiKey ? `- solve_captcha: no arguments required. Use this action IMMEDIATELY if you just clicked an 'I'm not a robot' checkbox and suspect a visual captcha challenge (like image tiles) has appeared, or if you encounter any visible verification puzzle. The engine will automatically solve the visual challenge for you.` : ''}
 - navigate: use only to follow an actual intended URL, never to restart the same flow after failure.
 - batch: multiple deterministic sub-actions in one browser turn (configured dynamically, usually up to 50). Use only when confidence is 0.90 or higher, such as filling visible fields then clicking their visible submit/continue control. Do not batch steps that require observing changed DOM between them.
 - request_executor_switch: use only when the current executor is objectively blocked. Set value to "standard-cdp", "browser-use", or "browser-harness-dev". The orchestrator may deny the request.

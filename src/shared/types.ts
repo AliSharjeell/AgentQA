@@ -100,6 +100,7 @@ export type AgentActionName =
   | "assert_selected"
   | "assert_count"
   | "screenshot"
+  | "solve_captcha"
   | "batch"
   | "tell_user"
   | "ask_user"
@@ -555,6 +556,8 @@ export interface AppSettings {
   apiBaseUrl: string;
   model: string;
   visionMode?: boolean;
+  groqApiKey?: string;
+  enableCaptchaSolver?: boolean;
   batching?: {
     mode: "dynamic" | "fixed";
     defaultBatchSize: number;
@@ -727,6 +730,7 @@ export interface QaApi {
   getSettings: () => Promise<AppSettings>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   testApiConnection: (url: string, method: string, headers: Record<string, string>, body: string) => Promise<{ ok: boolean; status: number; body: string }>;
+  testGroqCaptcha: (base64Image: string | null, groqKey?: string) => Promise<{ ok: boolean; text: string }>;
 
   // ── Browser ──
   getBrowserState: () => Promise<BrowserState>;

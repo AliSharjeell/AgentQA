@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import * as fs from 'node:fs';
 import type { AgentExecutorKind, AgentRunMode, AppSettings, ProviderRetryEvent } from '../shared/types';
 import type { QaRunAction, QaRunResult } from '../shared/types';
 import { callForScript } from './api';
@@ -1146,7 +1147,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       mode,
       currentExecutor: executor.kind,
       allowEscalation,
-      objectiveProgress
+      objectiveProgress,
+      settings
     });
 
     let parsed: AgentResponse | undefined;
@@ -1467,6 +1469,118 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         });
         return finishWithReport(report, 'Agent got stuck repeating actions.', currentUrl);
       }
+      continue;
+    }
+
+    if (action.action === 'solve_captcha') {
+      if (!settings.enableCaptchaSolver || !settings.groqApiKey) {
+        const result = `Captcha solver is disabled or missing Groq API Key in settings.`;
+        history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'failed', result, url: currentUrl });
+        lastActionResult = result;
+        resetDirective = `Cannot solve captcha because the solver is disabled. Please ask the user to enable it or find an alternative.`;
+        continue;
+      }
+      
+      const actionDescription = 'solve_captcha';
+      addStep(actionDescription, 'running');
+      onStep({ instruction: actionDescription, status: 'running' });
+
+      let groqResultText = '';
+      try {
+        const screenshotPath = await evidenceCollector.captureScreenshot(executor, `02_solve_captcha.jpeg`, { required: true });
+        if (!screenshotPath) throw new Error("Screenshot capture failed");
+        
+        const absolutePath = evidenceCollector.pathFor(screenshotPath);
+        const imageBuffer = await fs.promises.readFile(absolutePath);
+        const base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+
+        const messages: any[] = [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "You are a captcha solving agent for a browser automation tool. Analyze this image. If you see a captcha, return a strict JSON array of actions to take. Possible actions: {\"action\":\"click\",\"coordinates\":[x,y]}, {\"action\":\"type\",\"text\":\"xyz\"}. Return ONLY JSON, no markdown."
+              },
+              {
+                type: "image_url",
+                image_url: { url: base64Image }
+              }
+            ]
+          }
+        ];
+
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${settings.groqApiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "meta-llama/llama-4-scout-17b-16e-instruct",
+            messages,
+            temperature: 0.1,
+            max_completion_tokens: 1024,
+            top_p: 1
+          })
+        });
+        
+        const json = await res.json();
+        if (!res.ok) throw new Error(`Groq API Error ${res.status}: ${JSON.stringify(json)}`);
+        
+        let content = json.choices?.[0]?.message?.content || JSON.stringify(json);
+        groqResultText = content;
+
+        let parsedActions: any[] = [];
+        try {
+          const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          parsedActions = JSON.parse(jsonStr);
+        } catch (e) {
+          // ignore
+        }
+
+        if (Array.isArray(parsedActions) && parsedActions.length > 0) {
+          const batchActions: StructuredAction[] = parsedActions.map((p: any) => {
+            if (p.action === 'click' && Array.isArray(p.coordinates)) {
+              return { action: 'click', _target: { x: p.coordinates[0], y: p.coordinates[1], selector: '', width: 1, height: 1 } as any };
+            }
+            if (p.action === 'type' && p.text) {
+               return { action: 'type', value: p.text, _target: { selector: '', x: 0, y: 0, width: 1, height: 1 } as any };
+            }
+            return null;
+          }).filter(Boolean) as StructuredAction[];
+
+          if (batchActions.length > 0) {
+            addStep(actionDescription, 'running', `Executing ${batchActions.length} vision actions...`);
+            await executor.execute({ action: 'batch', actions: batchActions, description: 'Solve captcha clicks' }, null);
+            await new Promise(r => setTimeout(r, 2000));
+            const rec = await executor.observe();
+            if (rec.ok) {
+              applyObservedState(rec.observation, actionDescription);
+            }
+            const resText = `Captcha vision executed ${batchActions.length} actions successfully. Re-evaluate the new page state.`;
+            history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'success', result: resText, url: currentUrl });
+            lastActionResult = resText;
+            addStep(actionDescription, 'done', `Executed ${batchActions.length} actions`);
+            onStep({ instruction: actionDescription, status: 'done', result: `Executed ${batchActions.length} actions` });
+            resetDirective = null;
+            continue;
+          }
+        }
+        
+        history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'success', result: `Captcha vision result: ${groqResultText}`, url: currentUrl });
+        lastActionResult = `Captcha vision result: ${groqResultText}`;
+        addStep(actionDescription, 'done', `Groq returned: ${groqResultText}`);
+        onStep({ instruction: actionDescription, status: 'done', result: groqResultText });
+      } catch (err) {
+        const errStr = String(err);
+        history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'failed', result: `Captcha vision failed: ${errStr}`, url: currentUrl });
+        lastActionResult = `Captcha vision failed: ${errStr}`;
+        addStep(actionDescription, 'failed', undefined, errStr);
+        onStep({ instruction: actionDescription, status: 'failed', error: errStr });
+      }
+      
+      resetDirective = null;
       continue;
     }
 

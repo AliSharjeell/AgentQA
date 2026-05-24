@@ -135,6 +135,7 @@ export type StructuredActionName =
   | 'assert_selected'
   | 'assert_count'
   | 'screenshot'
+  | 'solve_captcha'
   | 'batch';
 
 export interface StructuredAction {

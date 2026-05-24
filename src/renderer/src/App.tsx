@@ -35,7 +35,8 @@ import type {
   QaVerdict,
   BrowserState,
   AppProgressEvent,
-  AgentRunMode
+  AgentRunMode,
+  AppSettings
 } from "../../shared/types";
 
 type Page = "main" | "settings";
@@ -962,7 +963,7 @@ function ReportBadge({ report }: { report: QaReport }): JSX.Element {
 // ─── Settings Panel ─────────────────────────────────────────────────────────
 
 function SettingsPanel(): JSX.Element {
-  const [settings, setSettings] = useState({ apiProvider: "anthropic", apiKey: "", apiBaseUrl: "", model: "Minimax-M2.7", visionMode: false });
+  const [settings, setSettings] = useState<AppSettings>({ apiProvider: "anthropic", apiKey: "", apiBaseUrl: "", model: "Minimax-M2.7", visionMode: false });
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
@@ -1013,7 +1014,7 @@ function SettingsPanel(): JSX.Element {
       <div className="space-y-3">
         <div>
           <label className="mb-1.5 block text-xs text-zinc-400">API Provider</label>
-          <select className="input w-full" value={settings.apiProvider} onChange={(e) => setSettings((s) => ({ ...s, apiProvider: e.target.value }))}>
+          <select className="input w-full" value={settings.apiProvider} onChange={(e) => setSettings((s) => ({ ...s, apiProvider: e.target.value as any }))}>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="openai">OpenAI</option>
           </select>
@@ -1036,7 +1037,37 @@ function SettingsPanel(): JSX.Element {
         </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className="space-y-3 pt-4 border-t border-white/10">
+        <p className="text-[10px] font-medium text-amber-500 uppercase tracking-wider select-none">Experimental</p>
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="settingsEnableCaptcha" checked={settings.enableCaptchaSolver} onChange={(e) => setSettings((s) => ({ ...s, enableCaptchaSolver: e.target.checked }))} className="rounded border-white/10 bg-white/5 accent-amber-500 cursor-pointer" />
+          <label htmlFor="settingsEnableCaptcha" className="text-xs text-zinc-400 select-none cursor-pointer hover:text-zinc-300 transition-colors">Enable Captcha Solver (Groq Vision)</label>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs text-zinc-400">Groq API Key</label>
+          <input className="input w-full" type="password" placeholder="gsk_..." value={settings.groqApiKey || ""} onChange={(e) => setSettings((s) => ({ ...s, groqApiKey: e.target.value }))} />
+        </div>
+        <div className="flex gap-2">
+          <button className="secondary-button w-full" onClick={async () => {
+            if (!settings.groqApiKey) return;
+            setTesting(true);
+            setTestResult(null);
+            try {
+              const res = await window.qaApi.testGroqCaptcha(null, settings.groqApiKey);
+              setTestResult({ ok: res.ok, message: res.text });
+            } catch (err) {
+              setTestResult({ ok: false, message: `Error: ${err}` });
+            } finally {
+              setTesting(false);
+            }
+          }} disabled={testing || !settings.groqApiKey}>
+            {testing ? <Loader2 size={12} className="animate-spin" /> : null}
+            Test Captcha (Groq API)
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-2 pt-4">
         <button className="primary-button flex-1" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save Settings"}</button>
         <button className="secondary-button" onClick={handleTest} disabled={testing || !settings.apiKey}>
           {testing ? <Loader2 size={12} className="animate-spin" /> : null}
