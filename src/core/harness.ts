@@ -867,16 +867,27 @@ function buildDomSnapshotPython(): string {
             }
           }
 
+          const sanitizeId = (str: string) => (str || '').replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_').toLowerCase().replace(/^_|_$/g, '').slice(0, 30);
+          const baseName = description || el.getAttribute('name') || el.id || tag;
+          const field_id = 'field_' + sanitizeId(baseName) + '_' + (elements.length - 1);
+
+          const sel = selectorFor(el);
+          const selector_candidates = [sel];
+          if (el.id) selector_candidates.push('#' + cssEscape(el.id));
+          if (el.getAttribute('name')) selector_candidates.push(tag + '[name="' + cssEscape(el.getAttribute('name') || '') + '"]');
+
           registry.push({
-            field_id: String(elements.length - 1),
+            field_id,
+            temporary_observation_id: 'elem_' + (elements.length - 1),
             label: description.slice(0, 160),
-            selector: selectorFor(el),
+            selector: sel,
+            selector_candidates: Array.from(new Set(selector_candidates)),
             tag,
             type: typeFor(el),
             name: el.getAttribute('name') || '',
             html_id: el.id || '',
             initial_value: String(value || ''),
-            label_source: labelSource,
+            label_source: labelSource as any,
             confidence: 1.0,
             bbox: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
             nearby_text: [],
@@ -1388,5 +1399,67 @@ ${indentPython(buildDomSnapshotPython(), '    ')}
         emit({"final": True, "ok": False, "summary": json.dumps(observation), "error": str(exc)})
     except Exception:
         emit({"final": True, "ok": False, "summary": "Action execution failed.", "error": str(exc)})
+`;
+}
+
+export function buildVerificationScript(registry: import('../shared/types').FieldRegistry): string {
+  return `
+import json
+
+def emit(payload):
+    print("BH_EVENT " + json.dumps(payload), flush=True)
+
+try:
+    results = {}
+    registry = json.loads(${JSON.stringify(JSON.stringify(registry))})
+
+    script = """(() => {
+      const results = {};
+      const registry = arguments[0];
+      
+      for (const field of registry) {
+        let el = null;
+        for (const sel of field.selector_candidates || [field.selector]) {
+          try { el = document.querySelector(sel); } catch(e) {}
+          if (el) break;
+        }
+        
+        if (!el) {
+          results[field.field_id] = { found: false };
+          continue;
+        }
+
+        const tag = el.tagName.toLowerCase();
+        let val = 'value' in el ? el.value : (el.isContentEditable ? el.innerText : null);
+        let checked = el.checked || el.getAttribute('aria-checked') === 'true';
+        
+        let selected_value = null;
+        let selected_label = null;
+        if (tag === 'select') {
+           const selectedOpt = Array.from(el.options || []).find(o => o.selected);
+           if (selectedOpt) {
+             selected_value = selectedOpt.value;
+             selected_label = (selectedOpt.label || selectedOpt.textContent || '').trim();
+           }
+        }
+        
+        results[field.field_id] = {
+          found: true,
+          value: String(val || ''),
+          checked: Boolean(checked),
+          selected_value: selected_value !== null ? String(selected_value) : null,
+          selected_label: selected_label !== null ? String(selected_label) : null
+        };
+      }
+      return results;
+    })()"""
+
+    # We need to escape the script properly to pass to js()
+    results = js(script, registry)
+    emit({"instruction": "Verify field values", "status": "done", "result": "Verified " + str(len(registry)) + " fields."})
+    emit({"final": True, "ok": True, "summary": json.dumps(results)})
+except Exception as exc:
+    emit({"instruction": "Verify field values", "status": "failed", "error": str(exc)})
+    emit({"final": True, "ok": False, "summary": "Verification capture failed.", "error": str(exc)})
 `;
 }

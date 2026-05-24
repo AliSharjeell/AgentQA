@@ -17,7 +17,16 @@ export function loadSettings(baseDir?: string): AppSettings {
     apiKey: '',
     apiBaseUrl: '',
     model: 'claude-sonnet-4-20250514',
-    visionMode: false
+    visionMode: false,
+    batching: {
+      mode: 'dynamic',
+      defaultBatchSize: 5,
+      maxBatchSize: 50,
+      allowLargeBatches: true,
+      requireSamePageForBatch: true,
+      verifyAfterBatch: true,
+      verifyEachSubAction: true
+    }
   };
 }
 

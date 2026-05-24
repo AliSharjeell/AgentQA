@@ -211,7 +211,7 @@ function missingElementResult(expected: string): QaVerificationResult {
 
 function verifyValue(expected: string, element: FieldRegistryEntry | ObservedElement | null, blockedRootCause: QaRootCause): QaVerificationResult {
   if (!element) return missingElementResult(expected);
-  const actual = 'initial_value' in element ? String(element.initial_value) : String((element as ObservedElement).value ?? '');
+  const actual = 'value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? '');
   const desc = 'label' in element ? element.label : (element as ObservedElement).description;
   return {
     expected: redactSensitiveText(expected, desc),
@@ -223,7 +223,7 @@ function verifyValue(expected: string, element: FieldRegistryEntry | ObservedEle
 
 function verifyContains(expected: string, element: FieldRegistryEntry | ObservedElement | null, mismatchRootCause: QaRootCause): QaVerificationResult {
   if (!element) return missingElementResult(expected);
-  const val = 'initial_value' in element ? String(element.initial_value) : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '');
+  const val = 'value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '');
   const actual = val;
   const passed = normalize(actual).includes(normalize(expected));
   return {
@@ -236,7 +236,7 @@ function verifyContains(expected: string, element: FieldRegistryEntry | Observed
 
 function verifyFutureYear(element: FieldRegistryEntry | ObservedElement | null): QaVerificationResult {
   if (!element) return missingElementResult('Future Year');
-  const actual = ('initial_value' in element ? String(element.initial_value) : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '')).trim();
+  const actual = ('value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '')).trim();
   const year = parseInt(actual, 10);
   const currentYear = new Date().getFullYear();
   const passed = !isNaN(year) && year >= currentYear;
@@ -250,7 +250,7 @@ function verifyFutureYear(element: FieldRegistryEntry | ObservedElement | null):
 
 function verifyNotEmpty(element: FieldRegistryEntry | ObservedElement | null): QaVerificationResult {
   if (!element) return missingElementResult('Not Empty');
-  const actual = ('initial_value' in element ? String(element.initial_value) : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '')).trim();
+  const actual = ('value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '')).trim();
   const passed = actual.length > 0;
   return {
     expected: 'Not Empty',
@@ -262,7 +262,7 @@ function verifyNotEmpty(element: FieldRegistryEntry | ObservedElement | null): Q
 
 function verifyChanged(spec: QaAssertionSpec, element: FieldRegistryEntry | ObservedElement | null): QaVerificationResult {
   if (!element) return missingElementResult('Changed value');
-  const actual = ('initial_value' in element ? String(element.initial_value) : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '')).trim();
+  const actual = ('value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? '')).trim();
   const initial = String(spec.expected ?? '').trim();
   const passed = actual !== initial;
   return {
@@ -287,7 +287,7 @@ function verifySelected(
       message: 'Could not find the dropdown in the final DOM observation.'
     };
   }
-  const selected = 'selected_value' in element ? 
+  const selected = 'selected_value' in element && element.selected_value !== undefined ? 
     (element.selected_label ? { label: element.selected_label, value: element.selected_value || '' } : null) 
     : selectedOption(element as ObservedElement);
     
@@ -301,7 +301,7 @@ function verifySelected(
     };
   }
     
-  const actual = selected ? `${selected.label} ${selected.value}`.trim() : ('initial_value' in element ? String(element.initial_value) : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? ''));
+  const actual = selected ? `${selected.label} ${selected.value}`.trim() : ('value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? ''));
   const expectedNormalized = normalize(expected);
   const matched = Boolean(
     selected &&
@@ -330,7 +330,7 @@ function verifyChecked(
       message: 'Could not find the checkbox/radio in the final DOM observation.'
     };
   }
-  const actual = 'initial_value' in element ? element.initial_value === 'true' : Boolean((element as ObservedElement).checked);
+  const actual = 'checked' in element && element.checked !== undefined ? element.checked : ('initial_value' in element ? element.initial_value === 'true' : Boolean((element as ObservedElement).checked));
   return {
     expected,
     actual,

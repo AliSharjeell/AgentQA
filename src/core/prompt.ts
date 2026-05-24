@@ -159,7 +159,7 @@ Action protocol:
 - assert_text/assert_url/assert_visible/assert_value/assert_checked/assert_selected/assert_count: use when the expected final state is known. Assertion failures are website bugs only when the expected behavior is clear.
 - screenshot: requires an output path value. Prefer letting the engine collect standard evidence screenshots automatically.
 - navigate: use only to follow an actual intended URL, never to restart the same flow after failure.
-- batch: 2 to 5 deterministic sub-actions in one browser turn. Use only when confidence is 0.90 or higher, such as filling a visible login form then clicking its visible submit button, filling a checkout form then continuing, or clicking several visible known product add buttons. Do not batch steps that require observing changed DOM between them.
+- batch: multiple deterministic sub-actions in one browser turn (configured dynamically, usually up to 50). Use only when confidence is 0.90 or higher, such as filling a visible login form then clicking its visible submit button, filling a checkout form then continuing, or clicking several visible known product add buttons. Do not batch steps that require observing changed DOM between them.
 - request_executor_switch: use only when the current executor is objectively blocked. Set value to "standard-cdp", "browser-use", or "browser-harness-dev". The orchestrator may deny the request.
 - finish_task: only when PASS/FAIL/AGENT_FAILED/INFRA_FAILED report is ready.
 - fail_task: when you must stop with a non-PASS report.

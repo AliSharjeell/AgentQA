@@ -105,8 +105,10 @@ export type AgentActionErrorCode =
 
 export interface FieldRegistryEntry {
   field_id: string;
+  temporary_observation_id: string;
   label: string;
   selector: string;
+  selector_candidates?: string[];
   tag: string;
   type: string;
   name: string;
@@ -118,6 +120,10 @@ export interface FieldRegistryEntry {
   confidence: number;
   bbox: { x: number; y: number; width: number; height: number };
   nearby_text: string[];
+  // Post-action verification
+  value?: string;
+  checked?: boolean;
+  
   // For <select> elements
   options?: Array<{ value: string; label: string; selected: boolean }>;
   selected_value?: string;
@@ -145,6 +151,15 @@ export interface AvailableElement {
   confidence: number;
 }
 
+export interface QaNetworkErrorDetail {
+  url: string;
+  method: string;
+  status: number | string;
+  resource_type: string;
+  is_critical: boolean;
+  reason: string;
+}
+
 export interface AgentObservation {
   session_id: string;
   url: string;
@@ -154,7 +169,7 @@ export interface AgentObservation {
   page_text_summary: string;
   screenshot_path?: string;
   console_errors: string[];
-  network_errors: string[];
+  network_errors: (string | QaNetworkErrorDetail)[];
 }
 
 export interface AgentAction {
@@ -202,9 +217,12 @@ export interface QaRunAction {
   action: string;
   target?: string;
   field_id?: string;
+  selector?: string;
   input?: string | number | boolean | null;
   initial_value?: string | number | boolean | null;
   planned_value?: string | number | boolean | null;
+  post_action_actual_value?: string | number | boolean | null;
+  final_actual_value?: string | number | boolean | null;
   actual_value?: string | number | boolean | null;
   action_result: "SUCCESS" | "FAILED" | "BLOCKED" | "SKIPPED";
   verification?: QaVerificationResult;
@@ -392,6 +410,15 @@ export interface AppSettings {
   apiBaseUrl: string;
   model: string;
   visionMode?: boolean;
+  batching?: {
+    mode: "dynamic" | "fixed";
+    defaultBatchSize: number;
+    maxBatchSize: number;
+    allowLargeBatches: boolean;
+    requireSamePageForBatch: boolean;
+    verifyAfterBatch: boolean;
+    verifyEachSubAction: boolean;
+  };
 }
 
 // ─── Browser ───────────────────────────────────────────────────────────────

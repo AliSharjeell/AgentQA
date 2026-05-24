@@ -4,12 +4,14 @@ import {
   buildAccessibilitySnapshotScript,
   buildObservationScript,
   buildScreenshotScript,
+  buildVerificationScript,
   runHarnessScript,
   type HarnessStepEvent,
   type ObservedElement,
   type PageObservation,
   type StructuredAction
 } from './harness';
+import type { FieldRegistry } from '../shared/types';
 
 export interface ExecutorSessionConfig {
   targetUrl: string;
@@ -54,6 +56,7 @@ export interface AgentExecutor {
   execute(action: StructuredAction, target: ObservedElement | null): Promise<ExecutorActionOutcome>;
   screenshot(outputPath: string, full?: boolean): Promise<ScreenshotResult>;
   accessibilitySnapshot(): Promise<AccessibilitySnapshotResult>;
+  verifyFields(registry: FieldRegistry): Promise<Record<string, any>>;
   stopSession(): Promise<void>;
 }
 
@@ -87,6 +90,7 @@ export function parsePageObservation(raw: string, targetUrl: string): PageObserv
       page: parsed.page || { url: targetUrl, title: '' },
       availableElements: elements,
       interactiveElements: elements,
+      fieldRegistry: (parsed as any).fieldRegistry || [],
       pageText: parsed.pageText || '',
       consoleErrors: parsed.consoleErrors || [],
       networkErrors: parsed.networkErrors || []
@@ -178,6 +182,17 @@ class BrowserHarnessExecutor implements AgentExecutor {
     }
   }
 
+  async verifyFields(registry: FieldRegistry): Promise<Record<string, any>> {
+    const config = this.requireConfig();
+    const result = await runHarnessScript(buildVerificationScript(registry), this.onStep, config.cdpUrl, config.timeoutMs);
+    if (!result.ok) return {};
+    try {
+      return JSON.parse(result.summary);
+    } catch {
+      return {};
+    }
+  }
+
   async stopSession(): Promise<void> {
     this.config = null;
   }
@@ -240,6 +255,10 @@ class UnavailableExecutor implements AgentExecutor {
 
   async accessibilitySnapshot(): Promise<AccessibilitySnapshotResult> {
     return { ok: false, error: `${this.kind} is not available in this build.` };
+  }
+
+  async verifyFields(registry: FieldRegistry): Promise<Record<string, any>> {
+    return {};
   }
 
   async stopSession(): Promise<void> {}

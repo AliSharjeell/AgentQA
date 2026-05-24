@@ -256,7 +256,7 @@ function actionRequiresTarget(action: StructuredAction): boolean {
   ].includes(action.action);
 }
 
-function resolveExecutableAction(action: StructuredAction, observation: PageObservation): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
+function resolveExecutableAction(action: StructuredAction, observation: PageObservation, settings?: import('./settings').AppSettings): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
   if (action.action !== 'batch') {
     const target = targetForId(action.targetId, observation);
     if (action.targetId && !target) {
@@ -278,8 +278,9 @@ function resolveExecutableAction(action: StructuredAction, observation: PageObse
   if (typeof action.confidence !== 'number' || action.confidence < 0.9) {
     return { target: null, error: 'Batch action blocked: confidence must be at least 0.90.' };
   }
-  if (subactions.length < 2 || subactions.length > 5) {
-    return { target: null, error: 'Batch action blocked: it must contain 2 to 5 sub-actions.' };
+  const maxBatchSize = settings?.batching?.maxBatchSize ?? 50;
+  if (subactions.length < 2 || subactions.length > maxBatchSize) {
+    return { target: null, error: `Batch action blocked: it must contain 2 to ${maxBatchSize} sub-actions.` };
   }
 
   const resolvedSubactions: StructuredAction[] = [];
@@ -553,6 +554,19 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     domAfterPath = evidenceCollector.saveDomSnapshot('dom-after.json', finalObservation);
     consoleLogPath = evidenceCollector.saveConsoleLog(observations);
     networkLogPath = evidenceCollector.saveNetworkLog(observations);
+    if (executor && finalObservation.fieldRegistry) {
+      const fieldResults = await executor.verifyFields(finalObservation.fieldRegistry);
+      for (const entry of finalObservation.fieldRegistry) {
+        const fr = fieldResults[entry.field_id];
+        if (fr && fr.found) {
+          entry.value = fr.value;
+          entry.checked = fr.checked;
+          entry.selected_value = fr.selected_value;
+          entry.selected_label = fr.selected_label;
+        }
+      }
+    }
+
     const assertions = verifyPlanAssertions({
       plan: testPlan,
       observation: finalObservation,
@@ -927,7 +941,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       continue;
     }
 
-    const resolved = resolveExecutableAction(action, observation);
+    const resolved = resolveExecutableAction(action, observation, settings);
     if (resolved.error || !resolved.action) {
       const result = resolved.error || 'Action could not be resolved against the current DOM observation.';
       history.push({ step: stepNum, action: action.action, targetId: action.targetId, status: 'failed', result, url: currentUrl });
