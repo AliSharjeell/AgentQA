@@ -96,6 +96,22 @@ textarea {
     @apply rounded-lg border border-white/10 bg-zinc-900/70 shadow-xl shadow-black/10;
   }
 
+  .qa-report-panel {
+    @apply rounded-lg border border-white/10 bg-zinc-950/50 p-3;
+  }
+
+  .qa-report-header {
+    @apply flex items-start gap-2 border-b border-white/5 pb-3;
+  }
+
+  .qa-status-badge {
+    @apply shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide;
+  }
+
+  .qa-tabbar {
+    @apply flex max-w-full gap-1 overflow-x-auto rounded-md border border-white/5 bg-black/20 p-1;
+  }
+
   input[type="checkbox"] {
     appearance: none;
     -webkit-appearance: none;

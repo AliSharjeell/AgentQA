@@ -49,6 +49,7 @@ export function createTask(input: QaTaskInput): QaTask {
     id: `qa-${current.nextId}`,
     name: input.name.trim(),
     targetUrl: input.targetUrl.trim(),
+    templateId: input.templateId,
     status: "todo",
     steps: [],
     visionMode: input.visionMode,
@@ -72,6 +73,7 @@ export function updateTask(id: string, update: QaTaskUpdate): QaTask {
   const task = getMutableTask(id);
   if (update.name !== undefined) task.name = update.name.trim();
   if (update.targetUrl !== undefined) task.targetUrl = update.targetUrl.trim();
+  if (update.templateId !== undefined) task.templateId = update.templateId;
   if (update.status !== undefined) task.status = update.status;
   if (update.visionMode !== undefined) task.visionMode = update.visionMode;
   if (update.mode !== undefined) task.mode = update.mode;

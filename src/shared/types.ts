@@ -45,13 +45,28 @@ export type AgentActionName =
   | "open_url"
   | "click"
   | "tap"
+  | "fill"
   | "type"
+  | "check"
+  | "uncheck"
+  | "radio"
+  | "hover"
+  | "upload_file"
   | "read"
   | "scroll"
   | "wait"
+  | "wait_for"
   | "press_key"
   | "select"
   | "assert"
+  | "assert_text"
+  | "assert_url"
+  | "assert_visible"
+  | "assert_value"
+  | "assert_checked"
+  | "assert_selected"
+  | "assert_count"
+  | "screenshot"
   | "batch"
   | "tell_user"
   | "ask_user"
@@ -60,6 +75,19 @@ export type AgentActionName =
   | "error";
 
 export type AgentActionStatus = "success" | "failed" | "skipped" | "needs_user" | "blocked";
+
+export type QaVerdict = "PASS" | "FAIL" | "BLOCKED" | "WARNING" | "SKIPPED";
+
+export type QaRootCause =
+  | "WEBSITE_BUG"
+  | "AGENT_LIMITATION"
+  | "TEST_DATA_ISSUE"
+  | "ENVIRONMENT_ISSUE"
+  | "AMBIGUOUS";
+
+export type QaSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
+
+export type QaEvidenceStatus = "COMPLETE" | "PARTIAL" | "MISSING";
 
 export type AgentActionErrorCode =
   | "ELEMENT_NOT_FOUND"
@@ -129,6 +157,121 @@ export interface AgentActionResult {
   executor: AgentExecutorKind;
 }
 
+export interface QaVerificationResult {
+  expected: string | number | boolean | null;
+  actual: string | number | boolean | null;
+  status: QaVerdict;
+  rootCause?: QaRootCause;
+  message?: string;
+}
+
+export interface QaRunAction {
+  action_id: string;
+  action: string;
+  target?: string;
+  input?: string | number | boolean | null;
+  action_result: "SUCCESS" | "FAILED" | "BLOCKED" | "SKIPPED";
+  verification?: QaVerificationResult;
+  screenshot?: string;
+  timestamp: string;
+}
+
+export interface QaAssertionResult {
+  id: string;
+  description: string;
+  status: QaVerdict;
+  expected?: string | number | boolean | null;
+  actual?: string | number | boolean | null;
+  rootCause?: QaRootCause;
+  evidence?: string[];
+  message?: string;
+  required?: boolean;
+}
+
+export interface QaAcceptanceCriterion {
+  id: string;
+  description: string;
+  status: QaVerdict;
+  assertionIds?: string[];
+}
+
+export interface QaIssue {
+  id: string;
+  title: string;
+  type: QaRootCause;
+  severity: QaSeverity;
+  status: QaVerdict;
+  expected: string;
+  actual: string;
+  affected_elements: string[];
+  evidence: {
+    screenshots: string[];
+    dom_snapshot?: string;
+    action_trace?: string;
+  };
+  recommendation: string;
+  reproSteps?: string[];
+}
+
+export interface QaEnvironment {
+  browser: string;
+  viewport: string;
+  os: string;
+  headless: boolean;
+}
+
+export interface QaRunStats {
+  actions_total: number;
+  actions_successful: number;
+  actions_failed: number;
+  assertions_total: number;
+  assertions_passed: number;
+  assertions_failed: number;
+  assertions_blocked: number;
+  console_errors: number;
+  network_errors: number;
+}
+
+export interface QaArtifactManifest {
+  html_report: string;
+  markdown_report: string;
+  json_result: string;
+  screenshots_dir: string;
+  action_trace?: string;
+  dom_before?: string;
+  dom_after?: string;
+  console_log?: string;
+  network_log?: string;
+  accessibility_tree?: string;
+  trace?: string;
+  video?: string;
+}
+
+export interface QaRunResult {
+  run_id: string;
+  test_id: string;
+  title: string;
+  target_url: string;
+  status: QaVerdict;
+  root_cause: QaRootCause;
+  severity: QaSeverity;
+  summary: string;
+  environment: QaEnvironment;
+  stats: QaRunStats;
+  acceptance_criteria: QaAcceptanceCriterion[];
+  issues: QaIssue[];
+  actions: QaRunAction[];
+  assertions: QaAssertionResult[];
+  artifacts: QaArtifactManifest;
+  evidence_status: QaEvidenceStatus;
+  reproducible_steps: string[];
+  recommendation: string;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  raw_report?: unknown;
+}
+
 export interface AgentPlanStep {
   id: string;
   description: string;
@@ -191,6 +334,7 @@ export interface QaTask {
   id: string;
   name: string;
   targetUrl: string;
+  templateId?: string;
   status: TaskStatus;
   steps: QaTaskStep[];
   createdAt: string;
@@ -207,6 +351,7 @@ export interface QaTask {
 export interface QaTaskInput {
   name: string;
   targetUrl: string;
+  templateId?: string;
   visionMode?: boolean;
   mode?: AgentRunMode;
   maxSteps?: number;
@@ -216,6 +361,7 @@ export interface QaTaskInput {
 export interface QaTaskUpdate {
   name?: string;
   targetUrl?: string;
+  templateId?: string;
   status?: TaskStatus;
   visionMode?: boolean;
   mode?: AgentRunMode;
@@ -236,20 +382,45 @@ export interface QaReportStep {
 
 export interface QaReport {
   taskId: string;
+  runId?: string;
+  testId?: string;
   taskName: string;
+  title?: string;
   targetUrl: string;
-  overallStatus: "pass" | "fail" | "partial";
+  status?: QaVerdict;
+  rootCause?: QaRootCause;
+  severity?: QaSeverity;
+  overallStatus: "pass" | "fail" | "partial" | QaVerdict;
   summary: string;
   totalSteps: number;
   passedSteps: number;
   failedSteps: number;
+  blockedSteps?: number;
+  warningSteps?: number;
   skippedSteps: number;
   startTime: string;
   endTime: string;
   durationMs: number;
   steps: QaReportStep[];
   screenshots: string[];
+  acceptanceCriteria?: QaAcceptanceCriterion[];
+  issues?: QaIssue[];
+  actions?: QaRunAction[];
+  assertions?: QaAssertionResult[];
+  artifacts?: QaArtifactManifest;
+  evidenceStatus?: QaEvidenceStatus;
+  reproducibleSteps?: string[];
+  recommendation?: string;
+  resultJson?: QaRunResult;
   aiReasoning: string;
+}
+
+export interface QaTemplate {
+  id: string;
+  title: string;
+  task: string;
+  url?: string;
+  category: "form" | "login" | "ecommerce" | "responsive" | "accessibility";
 }
 
 // ─── App Status ─────────────────────────────────────────────────────────────
@@ -314,6 +485,8 @@ export interface QaApi {
   // ── Reports ──
   getTaskReport: (taskId: string) => Promise<QaReport | null>;
   exportReport: (taskId: string, format: "json" | "markdown") => Promise<CsvExportResult>;
+  listTemplates: () => Promise<QaTemplate[]>;
+  readArtifact: (taskId: string, artifactPath: string) => Promise<{ ok: boolean; content?: string; dataUrl?: string; error?: string }>;
 
   // ── Events ──
   onAppProgress: (callback: (event: AppProgressEvent) => void) => () => void;

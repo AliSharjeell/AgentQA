@@ -115,9 +115,23 @@ agentqa config [options]
 * `--agent-mode`: Harness executor mode: `standard` | `browser-use` | `advanced` (default: `standard`)
 * `--allow-escalation`: Allow executor switch requests outside advanced mode
 * `--max-steps`: Maximum agent loop steps (default: `25`)
+* `--template`: Run a built-in QA template by id
+* `--output-dir`: Directory where `result.json`, `report.md`, `report.html`, screenshots, DOM snapshots, console logs, and network logs are written
 * `--verbose`: Print step-by-step progress to stderr
 * `--timeout`: Max seconds per step (default: `120`)
 * `--json`: Output structured JSON directly to stdout
+
+### Built-in QA Templates
+
+AgentQA includes demo/regression templates in the desktop app and CLI:
+
+| ID | Scenario |
+|---|---|
+| `full-form-fill` | RoboForm all-fields form with verified text/select values |
+| `login-negative` | SauceDemo invalid-login rejection and password redaction |
+| `ecommerce-add-to-cart` | LambdaTest iPhone search/add-to-cart verification |
+| `responsive-mobile-smoke` | Desktop/mobile navigation and CTA smoke check |
+| `accessibility-quick-check` | Basic title, heading, label, alt text, and keyboard checks |
 
 ### Output Format
 

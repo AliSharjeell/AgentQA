@@ -9,14 +9,10 @@ import {
   Pause,
   Square,
   Trash2,
-  ChevronDown,
-  ChevronRight,
   CheckCircle2,
   XCircle,
   Circle,
   Loader2,
-  Plus,
-  Bot,
   FileText,
   Settings,
   AlertCircle,
@@ -25,13 +21,17 @@ import {
   ArrowLeft,
   ArrowRight,
   Search,
-  CheckSquare,
-  XSquare
+  Image,
+  ListChecks,
+  Terminal,
+  Braces,
+  ShieldAlert
 } from "lucide-react";
 import type {
   QaTask,
-  QaTaskInput,
   QaReport,
+  QaTemplate,
+  QaVerdict,
   BrowserState,
   AppProgressEvent,
   AgentRunMode
@@ -253,10 +253,19 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
   const [creating, setCreating] = useState(false);
   const [mode, setMode] = useState<AgentRunMode>("standard");
   const [allowEscalation, setAllowEscalation] = useState(false);
+  const [templates, setTemplates] = useState<QaTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
+
+  useEffect(() => {
+    if (!window.qaApi) return;
+    void window.qaApi.listTemplates().then(setTemplates);
+  }, []);
 
   const handleCreateTask = useCallback(async () => {
     if (!inputName.trim() || !window.qaApi) return;
-    if (!browserUrl) {
+    const selectedTemplate = templates.find((template) => template.id === templateId);
+    const targetUrl = selectedTemplate?.url || browserUrl;
+    if (!targetUrl) {
       setUrlError("Navigate to a URL first using the bar above");
       setShowUrlHint(true);
       return;
@@ -267,7 +276,8 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     try {
       const task = await window.qaApi.createTask({
         name: inputName.trim(),
-        targetUrl: browserUrl,
+        targetUrl,
+        templateId: selectedTemplate?.id,
         mode,
         allowEscalation
       });
@@ -278,7 +288,17 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     } finally {
       setCreating(false);
     }
-  }, [inputName, browserUrl, mode, allowEscalation, onSelectTask, onRefresh, setTasks]);
+  }, [inputName, browserUrl, mode, allowEscalation, onSelectTask, onRefresh, setTasks, templateId, templates]);
+
+  const handleTemplateChange = useCallback((value: string) => {
+    setTemplateId(value);
+    const selectedTemplate = templates.find((template) => template.id === value);
+    if (selectedTemplate) {
+      setInputName(selectedTemplate.task);
+      setUrlError("");
+      setShowUrlHint(false);
+    }
+  }, [templates]);
 
   return (
     <div className="window-no-drag mt-4 flex flex-1 flex-col overflow-hidden">
@@ -311,6 +331,17 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
 
       {/* New task chat-style input (pinned to bottom) */}
       <div className="mt-auto pt-3 border-t border-white/5 space-y-1.5">
+        <select
+          className="h-8 w-full rounded-lg border border-white/5 bg-white/5 px-2 text-[11px] text-zinc-300 outline-none focus:border-white/10"
+          value={templateId}
+          onChange={(e) => handleTemplateChange(e.target.value)}
+          title="QA Template"
+        >
+          <option value="">Custom task</option>
+          {templates.map((template) => (
+            <option key={template.id} value={template.id}>{template.title}</option>
+          ))}
+        </select>
         <div className="grid grid-cols-[1fr_auto] gap-2 px-1">
           <select
             className="h-8 rounded-lg border border-white/5 bg-white/5 px-2 text-[11px] text-zinc-300 outline-none focus:border-white/10"
@@ -497,14 +528,9 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
               </p>
             </div>
           )}
-          {task.report?.summary && (
-            <div className="space-y-1 select-text">
-              <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Result</p>
-              <p className="text-[11px] text-zinc-300 leading-relaxed pl-1 select-text cursor-text">{task.report.summary}</p>
-            </div>
-          )}
-
-          {task.steps.length > 0 && (
+          {task.report ? (
+            <QaResultCard task={task} report={task.report} />
+          ) : task.steps.length > 0 && (
             <div className="space-y-1 select-text">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Steps</p>
               {task.steps.map((step) => (
@@ -595,6 +621,183 @@ function StatusIcon({ status, size = 14 }: { status: QaTask["status"]; size?: nu
 }
 
 // ─── Report Badge ──────────────────────────────────────────────────────────
+
+type QaReportTab = "summary" | "issues" | "steps" | "screenshots" | "console" | "json";
+
+function QaResultCard({ task, report }: { task: QaTask; report: QaReport }): JSX.Element {
+  const [tab, setTab] = useState<QaReportTab>("summary");
+  const [screenshots, setScreenshots] = useState<Record<string, string>>({});
+  const result = report.resultJson;
+  const status = (report.status || result?.status || "BLOCKED") as QaVerdict;
+  const screenshotPaths = report.screenshots || [];
+
+  useEffect(() => {
+    if (!window.qaApi || screenshotPaths.length === 0) return;
+    let canceled = false;
+    screenshotPaths.slice(0, 8).forEach((artifactPath) => {
+      void window.qaApi.readArtifact(task.id, artifactPath).then((artifact) => {
+        if (!canceled && artifact.ok && artifact.dataUrl) {
+          setScreenshots((prev) => ({ ...prev, [artifactPath]: artifact.dataUrl || "" }));
+        }
+      });
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [screenshotPaths.join("|"), task.id]);
+
+  return (
+    <div className="qa-report-panel space-y-3 select-text">
+      <div className="qa-report-header">
+        <div className={`qa-status-badge ${statusTone(status)}`}>{status}</div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium text-zinc-100 break-words">{report.title || report.taskName}</p>
+          <p className="text-[10px] text-zinc-500 break-all">{report.targetUrl}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-1.5">
+        <Metric label="Passed" value={report.passedSteps} tone="text-green-300" />
+        <Metric label="Failed" value={report.failedSteps} tone="text-red-300" />
+        <Metric label="Blocked" value={report.blockedSteps || 0} tone="text-amber-300" />
+      </div>
+
+      <div className="qa-tabbar">
+        <TabButton active={tab === "summary"} icon={<FileText size={11} />} label="Summary" onClick={() => setTab("summary")} />
+        <TabButton active={tab === "issues"} icon={<ShieldAlert size={11} />} label="Issues" onClick={() => setTab("issues")} />
+        <TabButton active={tab === "steps"} icon={<ListChecks size={11} />} label="Steps" onClick={() => setTab("steps")} />
+        <TabButton active={tab === "screenshots"} icon={<Image size={11} />} label="Shots" onClick={() => setTab("screenshots")} />
+        <TabButton active={tab === "console"} icon={<Terminal size={11} />} label="Console" onClick={() => setTab("console")} />
+        <TabButton active={tab === "json"} icon={<Braces size={11} />} label="JSON" onClick={() => setTab("json")} />
+      </div>
+
+      {tab === "summary" && (
+        <div className="space-y-3">
+          <p className="text-[11px] leading-relaxed text-zinc-300">{report.summary}</p>
+          <div className="space-y-1.5">
+            {(report.acceptanceCriteria || []).map((criterion) => (
+              <div key={criterion.id} className="flex items-start gap-2 rounded-md border border-white/5 bg-white/[0.03] px-2 py-1.5">
+                <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${statusDot(criterion.status)}`} />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-zinc-300">{criterion.description}</p>
+                  <p className="text-[9px] uppercase tracking-wide text-zinc-600">{criterion.id} / {criterion.status}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] leading-relaxed text-zinc-500">{report.recommendation}</p>
+        </div>
+      )}
+
+      {tab === "issues" && (
+        <div className="space-y-2">
+          {(report.issues || []).length === 0 ? (
+            <p className="text-[11px] text-zinc-500">No issues found.</p>
+          ) : (
+            (report.issues || []).map((issue) => (
+              <div key={issue.id} className="rounded-md border border-white/8 bg-zinc-950/60 p-2">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium text-zinc-100">{issue.title}</p>
+                  <span className="text-[9px] uppercase tracking-wide text-zinc-500">{issue.severity}</span>
+                </div>
+                <p className="text-[10px] text-zinc-500">{issue.type}</p>
+                <p className="mt-1 text-[10px] text-zinc-300">Expected: {issue.expected}</p>
+                <p className="text-[10px] text-zinc-400">Actual: {issue.actual}</p>
+                <p className="mt-1 text-[10px] text-zinc-500">{issue.recommendation}</p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === "steps" && (
+        <div className="space-y-1">
+          {report.reproducibleSteps?.map((step, index) => (
+            <p key={`${index}-${step}`} className="text-[10px] leading-relaxed text-zinc-300">{index + 1}. {step}</p>
+          ))}
+          <div className="border-t border-white/5 pt-2">
+            {task.steps.map((step) => <StepRow key={step.id} step={step} />)}
+          </div>
+        </div>
+      )}
+
+      {tab === "screenshots" && (
+        <div className="space-y-2">
+          {screenshotPaths.length === 0 ? (
+            <p className="text-[11px] text-zinc-500">No screenshots captured.</p>
+          ) : (
+            screenshotPaths.slice(0, 8).map((artifactPath) => (
+              <div key={artifactPath} className="rounded-md border border-white/8 bg-black/30 p-1.5">
+                {screenshots[artifactPath] ? (
+                  <img className="max-h-48 w-full rounded object-contain" src={screenshots[artifactPath]} alt={artifactPath} />
+                ) : (
+                  <div className="grid h-24 place-items-center text-[10px] text-zinc-600">Loading screenshot</div>
+                )}
+                <p className="mt-1 break-all text-[9px] text-zinc-500">{artifactPath}</p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === "console" && (
+        <div className="space-y-2">
+          <Metric label="Console Errors" value={result?.stats.console_errors || 0} tone="text-zinc-300" />
+          <Metric label="Network Errors" value={result?.stats.network_errors || 0} tone="text-zinc-300" />
+          <p className="break-all text-[10px] text-zinc-500">{report.artifacts?.console_log || "console.log"} / {report.artifacts?.network_log || "network.json"}</p>
+        </div>
+      )}
+
+      {tab === "json" && (
+        <pre className="max-h-72 overflow-auto rounded-md border border-white/8 bg-black/40 p-2 text-[9px] leading-relaxed text-zinc-300">
+          {JSON.stringify(result || report, null, 2)}
+        </pre>
+      )}
+
+      <div className="flex items-center gap-2 border-t border-white/5 pt-2">
+        <button className="text-[10px] text-zinc-500 hover:text-zinc-200" onClick={() => window.qaApi?.exportReport(report.taskId, "markdown")}>Export MD</button>
+        <button className="text-[10px] text-zinc-500 hover:text-zinc-200" onClick={() => window.qaApi?.exportReport(report.taskId, "json")}>Export JSON</button>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: number | string; tone: string }): JSX.Element {
+  return (
+    <div className="rounded-md border border-white/5 bg-white/[0.03] px-2 py-1.5">
+      <p className={`text-sm font-semibold ${tone}`}>{value}</p>
+      <p className="text-[9px] uppercase tracking-wide text-zinc-600">{label}</p>
+    </div>
+  );
+}
+
+function TabButton({ active, icon, label, onClick }: { active: boolean; icon: JSX.Element; label: string; onClick: () => void }): JSX.Element {
+  return (
+    <button
+      className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] transition ${active ? "bg-white/10 text-zinc-100" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+      onClick={onClick}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function statusTone(status: QaVerdict): string {
+  if (status === "PASS") return "border-green-400/30 bg-green-400/10 text-green-300";
+  if (status === "FAIL") return "border-red-400/30 bg-red-400/10 text-red-300";
+  if (status === "BLOCKED") return "border-amber-400/30 bg-amber-400/10 text-amber-300";
+  if (status === "WARNING") return "border-yellow-400/30 bg-yellow-400/10 text-yellow-300";
+  return "border-zinc-400/30 bg-zinc-400/10 text-zinc-300";
+}
+
+function statusDot(status: QaVerdict): string {
+  if (status === "PASS") return "bg-green-400";
+  if (status === "FAIL") return "bg-red-400";
+  if (status === "BLOCKED") return "bg-amber-400";
+  if (status === "WARNING") return "bg-yellow-400";
+  return "bg-zinc-500";
+}
 
 function ReportBadge({ report }: { report: QaReport }): JSX.Element {
   const [expanded, setExpanded] = useState(false);

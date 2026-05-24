@@ -146,12 +146,18 @@ QA result classification:
 
 Action protocol:
 - click: requires targetId.
-- type: requires targetId and value.
-- select: requires targetId and value. Use for native <select>, comboboxes, dropdowns, listboxes, and menu/list choices when the desired option text/value is known.
+- fill/type: requires targetId and value. Use fill for form fields; type is kept as an alias.
+- select: requires targetId and value. Use for native <select>, comboboxes, dropdowns, listboxes, and menu/list choices when the desired option text/value is known. The engine verifies the selected DOM value after the action.
+- check/uncheck/radio: requires targetId and verifies checked state after the action.
+- hover: requires targetId.
+- upload_file: requires targetId and absolute file path value.
 - press_key: use value or key for special keys only, such as Enter, Escape, Tab, ArrowDown, ArrowUp. Do not use for normal text entry.
+- wait_for: requires targetId or selector-like value and waits for visibility.
 - read: requires targetId.
 - scroll: use dy, negative scrolls down in browser-harness.
 - wait: use seconds, max 10.
+- assert_text/assert_url/assert_visible/assert_value/assert_checked/assert_selected/assert_count: use when the expected final state is known. Assertion failures are website bugs only when the expected behavior is clear.
+- screenshot: requires an output path value. Prefer letting the engine collect standard evidence screenshots automatically.
 - navigate: use only to follow an actual intended URL, never to restart the same flow after failure.
 - batch: 2 to 5 deterministic sub-actions in one browser turn. Use only when confidence is 0.90 or higher, such as filling a visible login form then clicking its visible submit button, filling a checkout form then continuing, or clicking several visible known product add buttons. Do not batch steps that require observing changed DOM between them.
 - request_executor_switch: use only when the current executor is objectively blocked. Set value to "standard-cdp", "browser-use", or "browser-harness-dev". The orchestrator may deny the request.
@@ -183,7 +189,7 @@ Return exactly this JSON shape:
     { "step": 2, "description": "Current work", "status": "CURRENT" }
   ],
   "activePhase": {
-    "action": "click | type | select | press_key | read | scroll | wait | navigate | batch | request_executor_switch | finish_task | fail_task",
+    "action": "click | fill | type | select | check | uncheck | radio | hover | upload_file | press_key | wait_for | read | scroll | wait | navigate | assert_text | assert_url | assert_visible | assert_value | assert_checked | assert_selected | assert_count | screenshot | batch | request_executor_switch | finish_task | fail_task",
     "targetId": "elem_0 when needed",
     "value": "text when needed",
     "key": "Enter when action is press_key",

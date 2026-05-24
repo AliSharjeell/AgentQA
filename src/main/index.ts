@@ -29,6 +29,8 @@ import path from "node:path";
 import fs from "node:fs";
 import { runQaTask as runEngineQaTask } from "../core/engine";
 import { HarnessStepEvent } from "../core/harness";
+import { renderMarkdownReport, toDesktopReport } from "../core/reporter";
+import { listQaTemplates } from "../core/templates";
 import { spawn } from "node:child_process";
 import {
   app,
@@ -106,6 +108,8 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
       mode: task.mode || "standard",
       maxSteps: task.maxSteps,
       allowEscalation: Boolean(task.allowEscalation),
+      outputDir: path.join(app.getPath("userData"), "qa-runs"),
+      templateId: task.templateId,
       onStep: (event: HarnessStepEvent) => {
         if (event.status === "running") {
           const lastStep = steps[steps.length - 1];
@@ -153,43 +157,20 @@ async function runBrowserHarnessTask(task: QaTask): Promise<boolean> {
     const finalSteps = setTaskSteps(task.id, [...steps]);
     emitTaskProgress(finalSteps);
 
-    if (!engineResult.ok) {
+    if (!engineResult.report) {
       throw new Error(engineResult.error || engineResult.summary);
     }
 
-    const endTime = new Date().toISOString();
-    const passedSteps = steps.filter((step) => step.status === "done").length;
-    const failedSteps = steps.filter((step) => step.status === "failed").length;
-    
-    // Merge engine's LLM-generated report if available
-    const r = engineResult.report;
-    const overallStatus = r ? (r.result === "PASS" ? "pass" : "fail") : "pass";
-    
-    const report: QaReport = {
+    const report: QaReport = toDesktopReport({
       taskId: task.id,
-      taskName: task.name,
-      targetUrl: task.targetUrl,
-      overallStatus,
-      summary: engineResult.summary,
-      totalSteps: steps.length,
-      passedSteps,
-      failedSteps,
-      skippedSteps: 0,
-      startTime,
-      endTime,
-      durationMs: new Date(endTime).getTime() - new Date(startTime).getTime(),
-      steps: steps.map((step) => ({
+      result: engineResult.report,
+      stepEvents: steps.map((step) => ({
         instruction: step.instruction,
         status: step.status,
-        result: step.result ?? "",
-        duration: 0,
+        result: step.result,
         error: step.error
-      })),
-      screenshots: r?.screenshots ?? [],
-      aiReasoning: r 
-        ? `Scenario: ${r.scenario}\n\nConfirmed Bugs: ${r.confirmedBugs.join(', ') || 'None'}\n\nFault Log: ${r.faultLog?.map((fault) => `[${fault.severity}/${fault.type}] ${fault.title}: ${fault.details}`).join(' | ') || 'None'}\n\nFix Recommendations: ${r.fixRecommendations.join(', ') || 'None'}`
-        : "Executed by browser-harness against the embedded preview browser via CDP."
-    };
+      }))
+    });
 
     attachReport(task.id, report);
     const completedTask = updateTask(task.id, { status: "done" });
@@ -511,6 +492,7 @@ function registerIpc(): void {
 
   // ── QA Tasks ──
   ipcMain.handle("tasks:list", () => listTasks());
+  ipcMain.handle("templates:list", () => listQaTemplates());
 
   ipcMain.handle("tasks:create", (_, input: QaTaskInput): QaTask => {
     const task = createTask(input);
@@ -583,7 +565,7 @@ function registerIpc(): void {
 
     let content: string;
     if (format === "json") {
-      content = JSON.stringify(report, null, 2);
+      content = JSON.stringify(report.resultJson || report, null, 2);
     } else {
       content = generateMarkdownReport(report);
     }
@@ -591,9 +573,26 @@ function registerIpc(): void {
     fs.writeFileSync(result.filePath, content, "utf8");
     return { canceled: false, filePath: result.filePath };
   });
+
+  ipcMain.handle("reports:artifact", async (_, taskId: string, artifactPath: string) => {
+    const report = getTaskReport(taskId);
+    if (!report?.runId) return { ok: false, error: "Report artifact root is unavailable." };
+    const root = path.resolve(app.getPath("userData"), "qa-runs", report.runId);
+    const resolved = path.resolve(root, artifactPath);
+    if (!resolved.startsWith(root)) return { ok: false, error: "Artifact path is outside the report directory." };
+    if (!fs.existsSync(resolved)) return { ok: false, error: "Artifact was not found." };
+    const ext = path.extname(resolved).toLowerCase();
+    if ([".png", ".jpg", ".jpeg", ".webp"].includes(ext)) {
+      const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "image/png";
+      return { ok: true, dataUrl: `data:${mime};base64,${fs.readFileSync(resolved).toString("base64")}` };
+    }
+    return { ok: true, content: fs.readFileSync(resolved, "utf8") };
+  });
 }
 
 function generateMarkdownReport(report: QaReport): string {
+  if (report.resultJson) return renderMarkdownReport(report.resultJson);
+
   const statusBadge =
     report.overallStatus === "pass" ? "✅ PASS" :
     report.overallStatus === "fail" ? "❌ FAIL" : "⚠️  PARTIAL";

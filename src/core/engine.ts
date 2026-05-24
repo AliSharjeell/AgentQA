@@ -1,4 +1,6 @@
+import crypto from 'node:crypto';
 import type { AgentExecutorKind, AgentRunMode, AppSettings } from '../shared/types';
+import type { QaRunAction, QaRunResult } from '../shared/types';
 import { callForScript } from './api';
 import {
   type CliReport,
@@ -10,6 +12,10 @@ import {
 } from './harness';
 import { createAgentExecutor, isExecutorAvailable, type AgentExecutor } from './executor';
 import { buildPrompt, normalizeScript, type AgentHistoryEntry, type AgentPlanStep } from './prompt';
+import { EvidenceCollector } from './evidence';
+import { createTestPlan } from './planner';
+import { buildQaRunResult, writeQaReportFiles } from './reporter';
+import { verifyAction, verifyPlanAssertions } from './verification';
 
 export interface TaskStep {
   instruction: string;
@@ -25,7 +31,7 @@ export interface TaskResult {
   durationMs: number;
   url: string;
   error: string | null;
-  report?: CliReport;
+  report?: QaRunResult;
 }
 
 export interface RunTaskOptions {
@@ -39,6 +45,8 @@ export interface RunTaskOptions {
   mode?: AgentRunMode;
   maxSteps?: number;
   allowEscalation?: boolean;
+  outputDir?: string;
+  templateId?: string;
 }
 
 type FinishAction = 'finish_task' | 'fail_task';
@@ -67,7 +75,8 @@ function emptyObservation(targetUrl: string): PageObservation {
     availableElements: [],
     interactiveElements: [],
     pageText: '',
-    consoleErrors: []
+    consoleErrors: [],
+    networkErrors: []
   };
 }
 
@@ -81,7 +90,8 @@ function parseObservation(raw: string, targetUrl: string): PageObservation {
       availableElements: elements,
       interactiveElements: elements,
       pageText: parsed.pageText || '',
-      consoleErrors: parsed.consoleErrors || []
+      consoleErrors: parsed.consoleErrors || [],
+      networkErrors: parsed.networkErrors || []
     };
   } catch {
     return emptyObservation(targetUrl);
@@ -224,7 +234,23 @@ function targetForId(targetId: string | undefined, observation: PageObservation)
 }
 
 function actionRequiresTarget(action: StructuredAction): boolean {
-  return ['click', 'type', 'select', 'read'].includes(action.action);
+  return [
+    'click',
+    'type',
+    'fill',
+    'select',
+    'check',
+    'uncheck',
+    'radio',
+    'hover',
+    'upload_file',
+    'read',
+    'assert_visible',
+    'assert_value',
+    'assert_checked',
+    'assert_selected',
+    'assert_count'
+  ].includes(action.action);
 }
 
 function resolveExecutableAction(action: StructuredAction, observation: PageObservation): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
@@ -238,6 +264,9 @@ function resolveExecutableAction(action: StructuredAction, observation: PageObse
     }
     if (action.action === 'select' && !action.value) {
       return { target, error: 'Select action requires value with the option label or value to choose.' };
+    }
+    if (['fill', 'type', 'upload_file', 'assert_text', 'assert_url', 'assert_value', 'assert_selected', 'assert_count', 'screenshot'].includes(action.action) && !action.value) {
+      return { target, error: `${action.action} action requires value.` };
     }
     return { action, target };
   }
@@ -264,6 +293,9 @@ function resolveExecutableAction(action: StructuredAction, observation: PageObse
     }
     if (item.action === 'select' && !item.value) {
       return { target: null, error: `Batch action blocked: select sub-action ${index + 1} requires value.` };
+    }
+    if (['fill', 'type', 'upload_file', 'assert_text', 'assert_url', 'assert_value', 'assert_selected', 'assert_count', 'screenshot'].includes(item.action) && !item.value) {
+      return { target: null, error: `Batch action blocked: ${item.action} sub-action ${index + 1} requires value.` };
     }
     resolvedSubactions.push({ ...item, _target: target });
   }
@@ -332,8 +364,8 @@ function makeReport(input: {
   };
 }
 
-function resultToOk(report: CliReport): boolean {
-  return report.result === 'PASS';
+function resultToOk(report: QaRunResult): boolean {
+  return report.status === 'PASS' || report.status === 'WARNING' || report.status === 'SKIPPED';
 }
 
 function addConsoleFaults(faults: QaFault[], observation: PageObservation, step: string): QaFault[] {
@@ -453,6 +485,22 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   const onStep = options.onStep || (() => {});
   const steps: TaskStep[] = [];
   const startTime = Date.now();
+  const startedAt = new Date(startTime).toISOString();
+  const runId = `qa-run-${crypto.randomUUID()}`;
+  const testPlan = createTestPlan({ prompt, targetUrl, templateId: options.templateId });
+  const evidenceCollector = new EvidenceCollector(runId, options.outputDir);
+  const observations: PageObservation[] = [];
+  const qaActions: QaRunAction[] = [];
+  const evidence: string[] = [];
+  let domBeforePath: string | undefined;
+  let domAfterPath: string | undefined;
+  let actionTracePath: string | undefined;
+  let consoleLogPath: string | undefined;
+  let networkLogPath: string | undefined;
+  let accessibilityTreePath: string | undefined;
+  let primaryScreenshotCaptured = false;
+  let failureScreenshotCaptured = false;
+  let executor: AgentExecutor | undefined;
 
   const addStep = (instruction: string, status: TaskStep['status'], result?: string, error?: string): void => {
     const lastStep = steps[steps.length - 1];
@@ -467,32 +515,6 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     }
     steps.push({ instruction, status, result, error });
   };
-
-  const finishWithReport = (report: CliReport, summary: string, url: string): TaskResult => {
-    for (const step of steps) {
-      if (step.status === 'running') step.status = report.result === 'PASS' ? 'done' : 'failed';
-    }
-    return {
-      ok: resultToOk(report),
-      summary,
-      steps,
-      durationMs: Date.now() - startTime,
-      url,
-      error: resultToOk(report) ? null : (report.confirmedBugs.join(', ') || report.warnings.join(', ') || summary),
-      report
-    };
-  };
-
-  if (!settings.apiKey) {
-    return {
-      ok: false,
-      summary: 'No API key configured.',
-      steps,
-      durationMs: Date.now() - startTime,
-      url: targetUrl,
-      error: 'Save an API key in settings or pass --api-key so the QA agent can generate actions.'
-    };
-  }
 
   let observation = emptyObservation(targetUrl);
   let currentUrl = targetUrl;
@@ -511,11 +533,94 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   let maxSteps = options.maxSteps && options.maxSteps > 0 ? options.maxSteps : 25;
   let stepBudgetExtensionsUsed = 0;
   const numberedObjectiveCount = countNumberedObjectives(prompt);
+
+  const rememberObservation = (nextObservation: PageObservation): void => {
+    observations.push(nextObservation);
+  };
+
+  const finishWithReport = async (legacyReport: CliReport, summary: string, url: string): Promise<TaskResult> => {
+    const finalObservation = observation || emptyObservation(url);
+    if (executor) {
+      const finalScreenshot = await evidenceCollector.captureScreenshot(executor, '04_final_state.png', { required: true });
+      if (finalScreenshot) evidence.push(finalScreenshot);
+      const fullScreenshot = await evidenceCollector.captureScreenshot(executor, '04_final_state_full.png', { full: true, required: true });
+      if (fullScreenshot) evidence.push(fullScreenshot);
+      accessibilityTreePath = await evidenceCollector.saveAccessibilityTree(executor);
+    }
+    domAfterPath = evidenceCollector.saveDomSnapshot('dom-after.json', finalObservation);
+    consoleLogPath = evidenceCollector.saveConsoleLog(observations);
+    networkLogPath = evidenceCollector.saveNetworkLog(observations);
+    const assertions = verifyPlanAssertions({
+      plan: testPlan,
+      observation: finalObservation,
+      llmReport: legacyReport,
+      evidence: [...evidence, ...(legacyReport.evidence || [])]
+    });
+    actionTracePath = evidenceCollector.saveActionTrace(qaActions);
+    const artifacts = evidenceCollector.manifest({
+      action_trace: actionTracePath,
+      dom_before: domBeforePath,
+      dom_after: domAfterPath,
+      console_log: consoleLogPath,
+      network_log: networkLogPath,
+      accessibility_tree: accessibilityTreePath
+    });
+    const finalReport = buildQaRunResult({
+      runId,
+      plan: testPlan,
+      targetUrl,
+      startedAt,
+      endedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTime,
+      actions: qaActions,
+      assertions,
+      observations,
+      llmReport: legacyReport,
+      evidence: [...evidence, ...(legacyReport.evidence || [])],
+      evidenceWarnings: evidenceCollector.getWarnings(),
+      artifacts
+    });
+    writeQaReportFiles(evidenceCollector, finalReport);
+    for (const step of steps) {
+      if (step.status === 'running') step.status = resultToOk(finalReport) ? 'done' : 'failed';
+    }
+    return {
+      ok: resultToOk(finalReport),
+      summary: finalReport.summary || summary,
+      steps,
+      durationMs: finalReport.duration_ms,
+      url,
+      error: resultToOk(finalReport) ? null : finalReport.summary,
+      report: finalReport
+    };
+  };
+
+  if (!settings.apiKey) {
+    const report = makeReport({
+      result: 'AGENT_FAILED',
+      scenario: prompt,
+      summary: 'No API key configured.',
+      finalUrl: targetUrl,
+      history,
+      faults: [{
+        severity: 'critical',
+        type: 'agent_issue',
+        title: 'No API key configured',
+        details: 'Save an API key in settings or pass --api-key so the QA agent can generate actions.',
+        evidence: [],
+        url: targetUrl,
+        step: 'configuration'
+      }],
+      evidence: ['No API key configured.']
+    });
+    return finishWithReport(report, 'No API key configured.', targetUrl);
+  }
+
   const executorStepHandler = (event: HarnessStepEvent): void => {
     onStep(event);
     addStep(event.instruction, event.status as TaskStep['status'], event.result, event.error);
   };
-  let executor: AgentExecutor = createAgentExecutor({
+  executor = createAgentExecutor({
     mode,
     targetUrl,
     cdpUrl,
@@ -592,9 +697,15 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   }
 
   observation = initial.observation;
+  rememberObservation(observation);
   currentUrl = observation.page.url || targetUrl;
   faults = addConsoleFaults(faults, observation, 'initial observation');
   lastActionResult = `Loaded ${currentUrl}`;
+  domBeforePath = evidenceCollector.saveDomSnapshot('dom-before.json', observation);
+  const initialScreenshot = await evidenceCollector.captureScreenshot(executor, '00_initial_page.png', { required: true });
+  if (initialScreenshot) evidence.push(initialScreenshot);
+  const navigationScreenshot = await evidenceCollector.captureScreenshot(executor, '01_after_navigation.png', { required: true });
+  if (navigationScreenshot) evidence.push(navigationScreenshot);
 
   for (let stepNum = 1; stepNum <= maxSteps; stepNum++) {
     addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'running');
@@ -714,6 +825,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       const switchedObservation = await executor.observe();
       if (switchedObservation.ok) {
         observation = switchedObservation.observation;
+        rememberObservation(observation);
         currentUrl = observation.page.url || currentUrl;
       }
       const result = switchedObservation.ok
@@ -801,6 +913,21 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     if (resolved.error || !resolved.action) {
       const result = resolved.error || 'Action could not be resolved against the current DOM observation.';
       history.push({ step: stepNum, action: action.action, targetId: action.targetId, status: 'failed', result, url: currentUrl });
+      qaActions.push({
+        action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
+        action: action.action,
+        target: action.targetId,
+        input: action.value || action.key || action.url || null,
+        action_result: 'BLOCKED',
+        verification: {
+          expected: 'Executable action resolved against current DOM',
+          actual: result,
+          status: 'BLOCKED',
+          rootCause: 'AGENT_LIMITATION',
+          message: result
+        },
+        timestamp: new Date().toISOString()
+      });
       lastActionResult = result;
       resetDirective = `The requested target was not present. Select a visible targetId from the current available elements, scroll, read state, or fail with evidence.`;
       continue;
@@ -816,11 +943,26 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     const parsedObservation = result.observation;
     if (parsedObservation.page.url || parsedObservation.availableElements.length || parsedObservation.pageText) {
       observation = parsedObservation;
+      rememberObservation(observation);
       currentUrl = observation.page.url || currentUrl;
       faults = addConsoleFaults(faults, observation, actionDescription);
     }
 
     const actionResult = result.actionResult || result.message;
+    let actionScreenshot: string | undefined;
+    const actionId = `A${String(qaActions.length + 1).padStart(3, '0')}`;
+    const majorAction = ['click', 'type', 'fill', 'select', 'check', 'uncheck', 'radio', 'press_key', 'navigate', 'batch'].includes(action.action);
+    if (!primaryScreenshotCaptured && majorAction) {
+      actionScreenshot = await evidenceCollector.captureScreenshot(executor, '02_after_primary_action.png');
+      primaryScreenshotCaptured = true;
+    }
+    if (!result.ok) {
+      const failureName = failureScreenshotCaptured ? `${actionId}_failure_state.png` : '03_failure_state.png';
+      actionScreenshot = await evidenceCollector.captureScreenshot(executor, failureName, { required: true }) || actionScreenshot;
+      failureScreenshotCaptured = true;
+    } else if (!actionScreenshot && majorAction) {
+      actionScreenshot = await evidenceCollector.captureScreenshot(executor, `${actionId}_after_${action.action}.png`);
+    }
 
     history.push({
       step: stepNum,
@@ -832,12 +974,21 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       result: actionResult,
       url: currentUrl
     });
+    qaActions.push(verifyAction({
+      actionId,
+      action: executableAction,
+      target,
+      outcome: result,
+      screenshot: actionScreenshot,
+      timestamp: new Date().toISOString()
+    }));
+    if (actionScreenshot) evidence.push(actionScreenshot);
 
     lastActionResult = result.ok ? actionResult : `Action failed: ${actionResult}`;
     if (result.ok) {
       if (action.action === 'scroll') {
         scrollStreak++;
-      } else if (['click', 'type', 'select', 'press_key', 'navigate', 'batch'].includes(action.action)) {
+      } else if (['click', 'type', 'fill', 'select', 'check', 'uncheck', 'radio', 'press_key', 'navigate', 'batch'].includes(action.action)) {
         scrollStreak = 0;
         blockedScrollAttempts = 0;
       }

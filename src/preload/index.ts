@@ -51,6 +51,8 @@ const api: QaApi = {
   // ── Reports ──
   getTaskReport: (taskId) => ipcRenderer.invoke("reports:get", taskId),
   exportReport: (taskId, format) => ipcRenderer.invoke("reports:export", taskId, format),
+  listTemplates: () => ipcRenderer.invoke("templates:list"),
+  readArtifact: (taskId, artifactPath) => ipcRenderer.invoke("reports:artifact", taskId, artifactPath),
 
   // ── Events ──
   onAppProgress: (callback) => {

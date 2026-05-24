@@ -1,7 +1,9 @@
 import type { AgentExecutorKind, AgentRunMode, AgentActionErrorCode, AgentActionStatus } from '../shared/types';
 import {
   buildActionScript,
+  buildAccessibilitySnapshotScript,
   buildObservationScript,
+  buildScreenshotScript,
   runHarnessScript,
   type HarnessStepEvent,
   type ObservedElement,
@@ -38,13 +40,20 @@ export interface ScreenshotResult {
   error?: string;
 }
 
+export interface AccessibilitySnapshotResult {
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+}
+
 export interface AgentExecutor {
   readonly kind: AgentExecutorKind;
   startSession(config: ExecutorSessionConfig): Promise<ExecutorSessionInfo>;
   openUrl(url: string): Promise<ExecutorActionOutcome>;
   observe(): Promise<ExecutorActionOutcome>;
   execute(action: StructuredAction, target: ObservedElement | null): Promise<ExecutorActionOutcome>;
-  screenshot(): Promise<ScreenshotResult>;
+  screenshot(outputPath: string, full?: boolean): Promise<ScreenshotResult>;
+  accessibilitySnapshot(): Promise<AccessibilitySnapshotResult>;
   stopSession(): Promise<void>;
 }
 
@@ -64,7 +73,8 @@ function emptyObservation(targetUrl: string): PageObservation {
     availableElements: [],
     interactiveElements: [],
     pageText: '',
-    consoleErrors: []
+    consoleErrors: [],
+    networkErrors: []
   };
 }
 
@@ -78,7 +88,8 @@ export function parsePageObservation(raw: string, targetUrl: string): PageObserv
       availableElements: elements,
       interactiveElements: elements,
       pageText: parsed.pageText || '',
-      consoleErrors: parsed.consoleErrors || []
+      consoleErrors: parsed.consoleErrors || [],
+      networkErrors: parsed.networkErrors || []
     };
   } catch {
     return emptyObservation(targetUrl);
@@ -144,8 +155,27 @@ class BrowserHarnessExecutor implements AgentExecutor {
     return outcome;
   }
 
-  async screenshot(): Promise<ScreenshotResult> {
-    return { ok: false, error: 'Screenshot capture is not implemented for this executor yet.' };
+  async screenshot(outputPath: string, full: boolean = false): Promise<ScreenshotResult> {
+    const config = this.requireConfig();
+    const result = await runHarnessScript(buildScreenshotScript(outputPath, full), this.onStep, config.cdpUrl, config.timeoutMs);
+    if (!result.ok) return { ok: false, error: result.error || result.summary || 'Screenshot capture failed.' };
+    try {
+      const parsed = JSON.parse(result.summary) as { path?: string };
+      return { ok: true, path: parsed.path || outputPath };
+    } catch {
+      return { ok: true, path: outputPath };
+    }
+  }
+
+  async accessibilitySnapshot(): Promise<AccessibilitySnapshotResult> {
+    const config = this.requireConfig();
+    const result = await runHarnessScript(buildAccessibilitySnapshotScript(), this.onStep, config.cdpUrl, config.timeoutMs);
+    if (!result.ok) return { ok: false, error: result.error || result.summary || 'Accessibility tree capture failed.' };
+    try {
+      return { ok: true, data: JSON.parse(result.summary) };
+    } catch {
+      return { ok: true, data: result.summary };
+    }
   }
 
   async stopSession(): Promise<void> {
@@ -205,6 +235,10 @@ class UnavailableExecutor implements AgentExecutor {
   }
 
   async screenshot(): Promise<ScreenshotResult> {
+    return { ok: false, error: `${this.kind} is not available in this build.` };
+  }
+
+  async accessibilitySnapshot(): Promise<AccessibilitySnapshotResult> {
     return { ok: false, error: `${this.kind} is not available in this build.` };
   }
 

@@ -22,6 +22,8 @@
  *   --mode       Testing mode: text | vision (default: text)
  *   --agent-mode Harness mode: standard | browser-use | advanced (default: standard)
  *   --max-steps  Maximum agent loop steps (default: 25)
+ *   --template   Built-in QA template id
+ *   --output-dir Directory where QA artifacts are written
  *   --json       Output result as JSON instead of text report
  *
  * Output:
@@ -71,6 +73,8 @@ function parseArgs(argv: string[]): ParsedArgs {
        arg === "--max-steps" ||
        arg === "--mode" ||
        arg === "--agent-mode" ||
+       arg === "--output-dir" ||
+       arg === "--template" ||
        arg === "--api-base-url" ||
        arg === "--base-url") &&
       i + 1 < argv.length
@@ -273,6 +277,8 @@ OPTIONS:
   --agent-mode Harness mode: standard | browser-use | advanced (default: standard)
   --max-steps  Maximum agent loop steps (default: 25)
   --allow-escalation Allow executor switch requests outside advanced mode
+  --template   Built-in QA template id
+  --output-dir Directory where QA artifacts are written
   --json       Output result as JSON instead of text report
 
 EXAMPLES:
@@ -423,6 +429,8 @@ EXAMPLES:
     mode: agentMode,
     maxSteps,
     allowEscalation,
+    outputDir: options["output-dir"] ? String(options["output-dir"]) : undefined,
+    templateId: options.template ? String(options.template) : undefined,
     visionMode: options.mode === "vision" || Boolean(options.vision) || settings.visionMode,
     onStep: verbose
       ? (event) => logStep(event.instruction, event.status, event.result || event.error)
@@ -432,22 +440,18 @@ EXAMPLES:
   const isJson = Boolean(options.json);
 
   if (isJson) {
-    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    process.stdout.write(JSON.stringify(result.report || result, null, 2) + "\n");
   } else {
     const r = result.report;
     if (r) {
       log("");
-      process.stdout.write(`RESULT: ${r.result}\n`);
-      process.stdout.write(`SCENARIO: ${r.scenario}\n`);
-      process.stdout.write(`CONFIRMED BUGS: ${r.confirmedBugs?.join(", ") || "None"}\n`);
-      process.stdout.write(`WARNINGS: ${r.warnings?.join(", ") || "None"}\n`);
-      process.stdout.write(`STEPS EXECUTED: ${r.stepsExecuted?.join(", ") || "None"}\n`);
-      process.stdout.write(`EVIDENCE: ${r.evidence?.join(", ") || "None"}\n`);
-      process.stdout.write(`FINAL URL: ${r.finalUrl || "Unknown"}\n`);
-      process.stdout.write(`SCREENSHOTS: ${r.screenshots?.join(", ") || "None"}\n`);
-      process.stdout.write(`CONSOLE ERRORS: ${r.consoleErrors?.join(", ") || "None"}\n`);
-      process.stdout.write(`FAULT LOG: ${r.faultLog?.map((fault) => `[${fault.severity}/${fault.type}] ${fault.title}: ${fault.details}`).join(" | ") || "None"}\n`);
-      process.stdout.write(`FIX RECOMMENDATIONS: ${r.fixRecommendations?.join(", ") || "None"}\n`);
+      process.stdout.write(`VERDICT: ${r.status}\n`);
+      process.stdout.write(`WHY: ${r.summary}\n`);
+      process.stdout.write(`ROOT CAUSE: ${r.root_cause}\n`);
+      process.stdout.write(`EVIDENCE: ${Object.values(r.artifacts).filter(Boolean).join(", ")}\n`);
+      process.stdout.write(`REPRO STEPS:\n${r.reproducible_steps.map((step, index) => `${index + 1}. ${step}`).join("\n") || "None"}\n`);
+      process.stdout.write(`RECOMMENDATION: ${r.recommendation}\n`);
+      process.stdout.write(`REPORT: ${r.artifacts.markdown_report}, ${r.artifacts.html_report}, ${r.artifacts.json_result}\n`);
     } else {
       log("");
       process.stdout.write(`RESULT: ${result.ok ? "PASS" : "FAIL"}\n`);
@@ -463,7 +467,7 @@ EXAMPLES:
     log("");
   }
 
-  const isPassed = result.ok && (!result.report || result.report.result === "PASS");
+  const isPassed = result.ok && (!result.report || ["PASS", "WARNING", "SKIPPED"].includes(result.report.status));
   process.exit(isPassed ? 0 : 1);
 }
 

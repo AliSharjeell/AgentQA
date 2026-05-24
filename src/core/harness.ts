@@ -90,9 +90,34 @@ export interface PageObservation {
   interactiveElements: ObservedElement[];
   pageText: string;
   consoleErrors: string[];
+  networkErrors: string[];
 }
 
-export type StructuredActionName = 'click' | 'type' | 'select' | 'press_key' | 'read' | 'scroll' | 'wait' | 'navigate' | 'batch';
+export type StructuredActionName =
+  | 'click'
+  | 'fill'
+  | 'type'
+  | 'select'
+  | 'check'
+  | 'uncheck'
+  | 'radio'
+  | 'hover'
+  | 'upload_file'
+  | 'press_key'
+  | 'wait_for'
+  | 'read'
+  | 'scroll'
+  | 'wait'
+  | 'navigate'
+  | 'assert_text'
+  | 'assert_url'
+  | 'assert_visible'
+  | 'assert_value'
+  | 'assert_checked'
+  | 'assert_selected'
+  | 'assert_count'
+  | 'screenshot'
+  | 'batch';
 
 export interface StructuredAction {
   action: StructuredActionName;
@@ -626,6 +651,17 @@ function buildDomSnapshotPython(): string {
     snapshot = js("""(() => {
       if (!window.__agentqaConsoleErrors) {
         window.__agentqaConsoleErrors = [];
+        const originalConsoleError = console.error.bind(console);
+        console.error = (...args) => {
+          try {
+            window.__agentqaConsoleErrors.push(args.map((arg) => {
+              if (arg instanceof Error) return arg.stack || arg.message;
+              if (typeof arg === 'object') return JSON.stringify(arg);
+              return String(arg);
+            }).join(' '));
+          } catch (_) {}
+          originalConsoleError(...args);
+        };
         window.addEventListener('error', event => {
           window.__agentqaConsoleErrors.push(String(event.message || event.error || 'error'));
         });
@@ -785,13 +821,38 @@ function buildDomSnapshotPython(): string {
     elements = snapshot.get("availableElements", []) if isinstance(snapshot, dict) else []
     page_text = snapshot.get("pageText", "") if isinstance(snapshot, dict) else ""
     console_errors = snapshot.get("consoleErrors", []) if isinstance(snapshot, dict) else []
+    network_errors = []
+    try:
+        for event in drain_events():
+            method = event.get("method", "")
+            params = event.get("params", {})
+            if method == "Network.loadingFailed":
+                network_errors.append({
+                    "type": "loadingFailed",
+                    "requestId": params.get("requestId"),
+                    "errorText": params.get("errorText", ""),
+                    "blockedReason": params.get("blockedReason", "")
+                })
+            elif method == "Network.responseReceived":
+                response = params.get("response", {})
+                status = int(response.get("status", 0) or 0)
+                if status >= 400:
+                    network_errors.append({
+                        "type": "httpError",
+                        "status": status,
+                        "url": response.get("url", ""),
+                        "mimeType": response.get("mimeType", "")
+                    })
+    except Exception as network_exc:
+        network_errors.append({"type": "captureFailed", "errorText": str(network_exc)})
     observation = {
         "taskUrl": target_url,
         "page": info,
         "availableElements": elements,
         "interactiveElements": elements,
         "pageText": page_text,
-        "consoleErrors": console_errors
+        "consoleErrors": console_errors,
+        "networkErrors": network_errors[-50:]
     }
 `;
 }
@@ -849,6 +910,44 @@ except Exception as exc:
 `;
 }
 
+export function buildScreenshotScript(outputPath: string, full: boolean = false): string {
+  return `
+import json
+import os
+
+output_path = ${JSON.stringify(outputPath)}
+
+def emit(payload):
+    print("BH_EVENT " + json.dumps(payload), flush=True)
+
+try:
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    saved_path = capture_screenshot(output_path, full=${full ? 'True' : 'False'})
+    emit({"instruction": "Capture screenshot", "status": "done", "result": saved_path})
+    emit({"final": True, "ok": True, "summary": json.dumps({"path": saved_path})})
+except Exception as exc:
+    emit({"instruction": "Capture screenshot", "status": "failed", "error": str(exc)})
+    emit({"final": True, "ok": False, "summary": "Screenshot capture failed.", "error": str(exc)})
+`;
+}
+
+export function buildAccessibilitySnapshotScript(): string {
+  return `
+import json
+
+def emit(payload):
+    print("BH_EVENT " + json.dumps(payload), flush=True)
+
+try:
+    tree = cdp("Accessibility.getFullAXTree")
+    emit({"instruction": "Capture accessibility tree", "status": "done", "result": "Captured accessibility tree"})
+    emit({"final": True, "ok": True, "summary": json.dumps(tree)})
+except Exception as exc:
+    emit({"instruction": "Capture accessibility tree", "status": "failed", "error": str(exc)})
+    emit({"final": True, "ok": False, "summary": "Accessibility tree capture failed.", "error": str(exc)})
+`;
+}
+
 export function buildActionScript(action: StructuredAction, target: ObservedElement | null, taskUrl: string): string {
   const actionWithTargets = attachTargets(action, target);
   return `
@@ -886,6 +985,45 @@ def type_target(value):
         raise Exception("Target element has no usable selector for type action.")
     set_value(selector, str(value or ""))
 
+def set_checked_target(checked):
+    active_target = action.get("_target") or target
+    if not active_target:
+        raise Exception("Target element is required for check/radio action.")
+    selector = active_target.get("selector") or ""
+    if not selector:
+        raise Exception("Target element has no usable selector for check/radio action.")
+    sel = json.dumps(selector)
+    expected = "true" if checked else "false"
+    result = js(f"""(() => {{
+      const root = document.querySelector({sel});
+      if (!root) throw new Error('set_checked: element not found: ' + {sel});
+      const el = root.matches('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]')
+        ? root
+        : root.querySelector('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]');
+      if (!el) throw new Error('set_checked: no checkbox/radio target for ' + {sel});
+      if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('set_checked: target is disabled.');
+      el.scrollIntoView({{ block: 'center', inline: 'center' }});
+      const isChecked = () => Boolean(el.checked || el.getAttribute('aria-checked') === 'true');
+      if (isChecked() !== {expected}) {{
+        const rect = el.getBoundingClientRect();
+        return {{ click: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }};
+      }}
+      return {{ click: false, checked: isChecked() }};
+    }})()""")
+    if result and result.get("click"):
+        click_at_xy(int(result["x"]), int(result["y"]))
+        time.sleep(0.1)
+    actual = js(f"""(() => {{
+      const root = document.querySelector({sel});
+      const el = root && (root.matches('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]')
+        ? root
+        : root.querySelector('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]'));
+      return Boolean(el && (el.checked || el.getAttribute('aria-checked') === 'true'));
+    }})()""")
+    if bool(actual) != bool(checked):
+        raise Exception("set_checked: verification failed. Expected " + str(checked) + " but found " + str(actual))
+    return "Checked" if checked else "Unchecked"
+
 def select_target(value):
     active_target = action.get("_target") or target
     if not active_target:
@@ -896,6 +1034,39 @@ def select_target(value):
     result = select_option(selector, str(value or ""))
     label = result.get("label") or result.get("value") or value
     return "Selected " + str(label)
+
+def hover_target():
+    active_target = action.get("_target") or target
+    if not active_target:
+        raise Exception("Target element is required for hover action.")
+    selector = active_target.get("selector") or ""
+    if selector:
+        sel = json.dumps(selector)
+        pos = js(f"""(() => {{
+          const el = document.querySelector({sel});
+          if (!el) return null;
+          el.scrollIntoView({{ block: 'center', inline: 'center' }});
+          const rect = el.getBoundingClientRect();
+          return {{ x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }};
+        }})()""")
+    else:
+        pos = {"x": active_target.get("x", 0), "y": active_target.get("y", 0)}
+    if not pos:
+        raise Exception("hover: element not found or not visible.")
+    cdp("Input.dispatchMouseEvent", type="mouseMoved", x=int(pos["x"]), y=int(pos["y"]))
+    return "Hovered " + str(active_target.get("id", "target"))
+
+def upload_file_target(value):
+    active_target = action.get("_target") or target
+    if not active_target:
+        raise Exception("Target element is required for upload_file action.")
+    selector = active_target.get("selector") or ""
+    if not selector:
+        raise Exception("Target element has no usable selector for upload_file action.")
+    if not value:
+        raise Exception("upload_file action requires an absolute file path value.")
+    upload_file(selector, str(value))
+    return "Uploaded file to " + selector
 
 def press_key_target(value):
     active_target = action.get("_target") or target
@@ -922,6 +1093,115 @@ def read_target():
             return str(value)
     return str(active_target.get("value") or active_target.get("description") or active_target.get("text") or "")
 
+def wait_for_target(value):
+    active_target = action.get("_target") or target
+    selector = (active_target or {}).get("selector") or str(value or "")
+    if selector:
+        if wait_for_element(selector, timeout=10, visible=True):
+            return "Waited for visible " + selector
+        raise Exception("wait_for: element did not become visible: " + selector)
+    time.sleep(1)
+    return "Waited for page state"
+
+def assert_text_target(expected):
+    active_target = action.get("_target") or target
+    text = read_target() if active_target else js("(document.body && document.body.innerText || '')")
+    want = str(expected or "")
+    if want.lower() not in str(text).lower():
+        raise Exception('assert_text failed. Expected text containing "' + want + '".')
+    return "Asserted text contains " + want
+
+def assert_url_target(expected):
+    url = js("window.location.href")
+    want = str(expected or "")
+    if want and want not in str(url):
+        raise Exception('assert_url failed. Expected URL containing "' + want + '" but found "' + str(url) + '".')
+    return "Asserted URL " + str(url)
+
+def assert_visible_target():
+    active_target = action.get("_target") or target
+    if not active_target:
+        raise Exception("Target element is required for assert_visible action.")
+    selector = active_target.get("selector") or ""
+    if not selector:
+        raise Exception("Target element has no usable selector for assert_visible action.")
+    sel = json.dumps(selector)
+    visible = js(f"""(() => {{
+      const el = document.querySelector({sel});
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    }})()""")
+    if not visible:
+        raise Exception("assert_visible failed for " + selector)
+    return "Asserted visible " + selector
+
+def assert_value_target(expected):
+    actual = read_target()
+    want = str(expected or "")
+    if str(actual) != want:
+        raise Exception('assert_value failed. Expected "' + want + '" but found "' + str(actual) + '".')
+    return "Asserted value " + want
+
+def assert_checked_target(expected):
+    active_target = action.get("_target") or target
+    if not active_target:
+        raise Exception("Target element is required for assert_checked action.")
+    selector = active_target.get("selector") or ""
+    sel = json.dumps(selector)
+    actual = js(f"""(() => {{
+      const root = document.querySelector({sel});
+      const el = root && (root.matches('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]')
+        ? root
+        : root.querySelector('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]'));
+      return Boolean(el && (el.checked || el.getAttribute('aria-checked') === 'true'));
+    }})()""")
+    want = str(expected).lower() not in ("false", "0", "no", "off", "")
+    if bool(actual) != bool(want):
+        raise Exception("assert_checked failed. Expected " + str(want) + " but found " + str(actual))
+    return "Asserted checked " + str(want)
+
+def assert_selected_target(expected):
+    active_target = action.get("_target") or target
+    if not active_target:
+        raise Exception("Target element is required for assert_selected action.")
+    selector = active_target.get("selector") or ""
+    sel = json.dumps(selector)
+    selected = js(f"""(() => {{
+      const el = document.querySelector({sel});
+      if (!el) return null;
+      if (el.tagName.toLowerCase() === 'select') {{
+        const option = el.options[el.selectedIndex];
+        return {{ value: String(el.value || ''), label: option ? String(option.label || option.textContent || '').replace(/\\s+/g, ' ').trim() : '' }};
+      }}
+      return {{ value: String(el.getAttribute('data-value') || ''), label: String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim() }};
+    }})()""")
+    want = str(expected or "").strip().lower()
+    actual = ((selected or {}).get("value", "") + " " + (selected or {}).get("label", "")).strip().lower()
+    if want and want not in actual:
+        raise Exception('assert_selected failed. Expected "' + str(expected) + '" but found "' + actual + '".')
+    return "Asserted selected " + str(expected)
+
+def assert_count_target(expected):
+    active_target = action.get("_target") or target
+    selector = (active_target or {}).get("selector") or str(action.get("selector") or "")
+    if not selector:
+        raise Exception("assert_count requires a target selector.")
+    sel = json.dumps(selector)
+    actual = int(js(f"document.querySelectorAll({sel}).length") or 0)
+    want = int(expected or 0)
+    if actual != want:
+        raise Exception("assert_count failed. Expected " + str(want) + " but found " + str(actual))
+    return "Asserted count " + str(want)
+
+def screenshot_action(value):
+    path = str(value or "")
+    if not path:
+        raise Exception("screenshot action requires an output path value.")
+    capture_screenshot(path, full=False)
+    return "Screenshot saved " + path
+
 def execute_one(item):
     global action
     previous_action = action
@@ -931,15 +1211,41 @@ def execute_one(item):
     if kind == "click":
         click_target()
         result = "Clicked " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
-    elif kind == "type":
+    elif kind == "type" or kind == "fill":
         type_target(item.get("value", ""))
         result = "Typed into " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
     elif kind == "select":
         result = select_target(item.get("value", ""))
+    elif kind == "check" or kind == "radio":
+        result = set_checked_target(True)
+    elif kind == "uncheck":
+        result = set_checked_target(False)
+    elif kind == "hover":
+        result = hover_target()
+    elif kind == "upload_file":
+        result = upload_file_target(item.get("value", ""))
     elif kind == "press_key":
         result = press_key_target(item.get("key") or item.get("value", "Enter"))
+    elif kind == "wait_for":
+        result = wait_for_target(item.get("value", ""))
     elif kind == "read":
         result = read_target()
+    elif kind == "assert_text":
+        result = assert_text_target(item.get("value", ""))
+    elif kind == "assert_url":
+        result = assert_url_target(item.get("value", ""))
+    elif kind == "assert_visible":
+        result = assert_visible_target()
+    elif kind == "assert_value":
+        result = assert_value_target(item.get("value", ""))
+    elif kind == "assert_checked":
+        result = assert_checked_target(item.get("value", True))
+    elif kind == "assert_selected":
+        result = assert_selected_target(item.get("value", ""))
+    elif kind == "assert_count":
+        result = assert_count_target(item.get("value", 0))
+    elif kind == "screenshot":
+        result = screenshot_action(item.get("value", ""))
     elif kind == "scroll":
         dy = int(item.get("dy") or -650)
         scroll(500, 500, dy=dy)
