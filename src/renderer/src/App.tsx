@@ -533,7 +533,7 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
           ) : task.steps.length > 0 && (
             <div className="space-y-1 select-text">
               <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1 select-none">Steps</p>
-              {task.steps.map((step) => (
+              {[...task.steps].reverse().map((step) => (
                 <StepRow key={step.id} step={step} />
               ))}
             </div>
@@ -552,6 +552,7 @@ function TaskItem({ task, active, onClick, onStart, onStop, onPause, onResume, o
 }
 
 function StepRow({ step }: { step: QaTask["steps"][number] }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
   const statusColor =
     step.status === "done" ? "text-green-400" :
     step.status === "failed" ? "text-red-400" :
@@ -563,14 +564,21 @@ function StepRow({ step }: { step: QaTask["steps"][number] }): JSX.Element {
     step.status === "running" ? <Loader2 size={11} className="animate-spin" /> :
     <Circle size={11} />;
 
+  const hasLongResult = step.result && step.result.length > 150;
+  const hasLongError = step.error && step.error.length > 150;
+  const isExpandable = hasLongResult || hasLongError;
+
   return (
     <div className="flex items-start gap-2 py-0.5 select-text">
       <span className={`mt-0.5 shrink-0 select-none ${statusColor}`}>{statusIcon}</span>
       <div className="min-w-0 flex-1 select-text">
         <p className={`text-[11px] select-text cursor-text break-words whitespace-pre-wrap ${step.status === "failed" ? "text-red-400" : "text-zinc-300"}`}>{step.instruction}</p>
-        {step.result && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result}</p>}
+        {step.result && !expanded && !hasLongResult && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result}</p>}
+        {step.result && expanded && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result}</p>}
+        {step.result && hasLongResult && !expanded && <p className="text-[10px] text-zinc-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.result.slice(0, 150)}...<button className="text-indigo-400 hover:text-indigo-300 ml-1" onClick={() => setExpanded(true)}>View more</button></p>}
         {step.error && <p className="text-[10px] text-red-500 mt-0.5 break-words whitespace-pre-wrap select-text cursor-text leading-normal">{step.error}</p>}
         {step.screenshotPath && <p className="text-[10px] text-indigo-400 mt-0.5 select-text">Screenshot saved</p>}
+        {expanded && isExpandable && <button className="text-[10px] text-zinc-500 hover:text-zinc-300 mt-0.5" onClick={() => setExpanded(false)}>Show less</button>}
       </div>
     </div>
   );
