@@ -136,6 +136,7 @@ export type StructuredActionName =
   | 'assert_count'
   | 'screenshot'
   | 'solve_captcha'
+  | 'click_coordinate'
   | 'batch';
 
 export interface StructuredAction {
@@ -2044,6 +2045,12 @@ def screenshot_action(value):
     capture_screenshot(path, full=False)
     return "Screenshot saved " + path
 
+def click_coordinate_action(x, y):
+    cdp("Input.dispatchMouseEvent", type="mouseMoved", x=int(float(x)), y=int(float(y)))
+    cdp("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, x=int(float(x)), y=int(float(y)))
+    _time.sleep(0.05)
+    cdp("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, x=int(float(x)), y=int(float(y)))
+
 def execute_one(item):
     global action
     previous_action = action
@@ -2056,6 +2063,13 @@ def execute_one(item):
     if kind == "click":
         click_target()
         result = "Clicked " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))
+    elif kind == "click_coordinate":
+        coords = str(item.get("targetId") or "").split(",")
+        if len(coords) >= 2:
+            click_coordinate_action(coords[0].strip(), coords[1].strip())
+            result = "Clicked coordinate " + coords[0] + ", " + coords[1]
+        else:
+            raise Exception("click_coordinate requires targetId in 'x,y' format")
     elif kind == "type" or kind == "fill":
         type_target(item.get("value", ""))
         result = "Typed into " + str((item.get("_target") or {}).get("id", item.get("targetId", "")))

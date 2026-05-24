@@ -278,6 +278,12 @@ function actionRequiresTarget(action: StructuredAction): boolean {
 function resolveExecutableAction(action: StructuredAction, observation: PageObservation, settings?: import('../shared/types').AppSettings): { action?: StructuredAction; target: ObservedElement | null; error?: string } {
   if (action.action !== 'batch') {
     const target = targetForId(action.targetId, observation);
+    if (action.action === 'click_coordinate') {
+       if (!action.targetId || !action.targetId.includes(',')) {
+          return { target: null, error: `click_coordinate requires targetId in x,y format.` };
+       }
+       return { action, target: null };
+    }
     if (action.targetId && !target) {
       return { target: null, error: `Target ${action.targetId} is not available in the current DOM observation.` };
     }
@@ -308,6 +314,13 @@ function resolveExecutableAction(action: StructuredAction, observation: PageObse
       return { target: null, error: `Batch action blocked: nested batch at sub-action ${index + 1}.` };
     }
     const target = targetForId(item.targetId, observation);
+    if (item.action === 'click_coordinate') {
+       if (!item.targetId || !item.targetId.includes(',')) {
+          return { target: null, error: `Batch action blocked: click_coordinate requires targetId in x,y format at sub-action ${index + 1}.` };
+       }
+       resolvedSubactions.push({ ...item });
+       continue;
+    }
     if (item.targetId && !target) {
       return { target: null, error: `Batch action blocked: target ${item.targetId} is unavailable for sub-action ${index + 1}.` };
     }
@@ -1485,89 +1498,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       addStep(actionDescription, 'running');
       onStep({ instruction: actionDescription, status: 'running' });
 
-      let groqResultText = '';
       try {
-        const screenshotPath = await evidenceCollector.captureScreenshot(executor, `02_solve_captcha.jpeg`, { required: true });
-        if (!screenshotPath) throw new Error("Screenshot capture failed");
-        
-        const absolutePath = evidenceCollector.pathFor(screenshotPath);
-        const imageBuffer = await fs.promises.readFile(absolutePath);
-        const base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
-
-        const messages: any[] = [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: "You are a captcha solving agent for a browser automation tool. Analyze this image. If you see a captcha, return a strict JSON array of actions to take. Possible actions: {\"action\":\"click\",\"coordinates\":[x,y]}, {\"action\":\"type\",\"text\":\"xyz\"}. Return ONLY JSON, no markdown."
-              },
-              {
-                type: "image_url",
-                image_url: { url: base64Image }
-              }
-            ]
-          }
-        ];
-
-        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${settings.groqApiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: "meta-llama/llama-4-scout-17b-16e-instruct",
-            messages,
-            temperature: 0.1,
-            max_completion_tokens: 1024,
-            top_p: 1
-          })
-        });
-        
-        const json = await res.json();
-        if (!res.ok) throw new Error(`Groq API Error ${res.status}: ${JSON.stringify(json)}`);
-        
-        let content = json.choices?.[0]?.message?.content || JSON.stringify(json);
-        groqResultText = content;
-
-        let parsedActions: any[] = [];
-        try {
-          const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-          parsedActions = JSON.parse(jsonStr);
-        } catch (e) {
-          // ignore
-        }
-
-        if (Array.isArray(parsedActions) && parsedActions.length > 0) {
-          const batchActions: StructuredAction[] = parsedActions.map((p: any) => {
-            if (p.action === 'click' && Array.isArray(p.coordinates)) {
-              return { action: 'click', _target: { x: p.coordinates[0], y: p.coordinates[1], selector: '', width: 1, height: 1 } as any };
-            }
-            if (p.action === 'type' && p.text) {
-               return { action: 'type', value: p.text, _target: { selector: '', x: 0, y: 0, width: 1, height: 1 } as any };
-            }
-            return null;
-          }).filter(Boolean) as StructuredAction[];
-
-          if (batchActions.length > 0) {
-            addStep(actionDescription, 'running', `Executing ${batchActions.length} vision actions...`);
-            await executor.execute({ action: 'batch', actions: batchActions, description: 'Solve captcha clicks' }, null);
-            await new Promise(r => setTimeout(r, 2000));
-            const rec = await executor.observe();
-            if (rec.ok) {
-              applyObservedState(rec.observation, actionDescription);
-            }
-            const resText = `Captcha vision executed ${batchActions.length} actions successfully. Re-evaluate the new page state.`;
-            history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'success', result: resText, url: currentUrl });
-            lastActionResult = resText;
-            addStep(actionDescription, 'done', `Executed ${batchActions.length} actions`);
-            onStep({ instruction: actionDescription, status: 'done', result: `Executed ${batchActions.length} actions` });
-            resetDirective = null;
-            continue;
-          }
-        }
-        
+        const groqResultText = await runGroqVisionCaptcha(executor, settings, evidenceCollector);
         history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'success', result: `Captcha vision result: ${groqResultText}`, url: currentUrl });
         lastActionResult = `Captcha vision result: ${groqResultText}`;
         addStep(actionDescription, 'done', `Groq returned: ${groqResultText}`);
@@ -1616,6 +1548,45 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     const beforeActionObservation = observation;
     let result = await executor.execute(executableAction, target);
+
+    const isCaptchaTickbox = action.action === 'click' && target && (
+       target.description?.toLowerCase().includes('robot') || 
+       target.id?.toLowerCase().includes('recaptcha') ||
+       target.selector?.toLowerCase().includes('recaptcha')
+    );
+
+    if (isCaptchaTickbox && settings.enableCaptchaSolver && settings.groqApiKey) {
+      addStep('Auto-solve captcha popup', 'running');
+      onStep({ instruction: 'Auto-solve captcha popup', status: 'running' });
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const groqResultText = await runGroqVisionCaptcha(executor, settings, evidenceCollector);
+        let batchJson;
+        try { batchJson = JSON.parse(groqResultText); } catch(e) {}
+        if (batchJson && batchJson.action === 'batch' && batchJson.actions?.length > 0) {
+           addStep('Auto-solve captcha popup', 'running', `Executing ${batchJson.actions.length} vision actions...`);
+           await executor.execute(batchJson, null);
+           await new Promise(r => setTimeout(r, 2000));
+           const rec = await executor.observe();
+           if (rec.ok) {
+             applyObservedState(rec.observation, 'Auto-solve captcha popup');
+             result.observation = rec.observation;
+           }
+           result.actionResult += ` | Auto-solved captcha with ${batchJson.actions.length} actions.`;
+           addStep('Auto-solve captcha popup', 'done', `Executed ${batchJson.actions.length} actions`);
+           onStep({ instruction: 'Auto-solve captcha popup', status: 'done', result: `Executed ${batchJson.actions.length} actions` });
+        } else {
+           result.actionResult += ` | Captcha vision returned: ${groqResultText}`;
+           addStep('Auto-solve captcha popup', 'done', `Groq returned: ${groqResultText}`);
+           onStep({ instruction: 'Auto-solve captcha popup', status: 'done', result: groqResultText });
+        }
+      } catch (err) {
+        const errStr = String(err);
+        result.actionResult += ` | Captcha vision failed: ${errStr}`;
+        addStep('Auto-solve captcha popup', 'failed', undefined, errStr);
+        onStep({ instruction: 'Auto-solve captcha popup', status: 'failed', error: errStr });
+      }
+    }
 
     if (
       !result.ok &&
@@ -1844,4 +1815,79 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     consoleErrors: observation.consoleErrors
   });
   return finishWithReport(report, report.evidence[0], currentUrl);
+}
+
+export async function runGroqVisionCaptcha(executor: AgentExecutor, settings: import('../shared/types').AppSettings, evidenceCollector: any): Promise<string> {
+  const screenshotPath = await evidenceCollector.captureScreenshot(executor, `02_solve_captcha.jpeg`, { required: true });
+  if (!screenshotPath) throw new Error("Screenshot capture failed");
+  
+  const fs = require('node:fs');
+  const absolutePath = evidenceCollector.pathFor(screenshotPath);
+  const imageBuffer = await fs.promises.readFile(absolutePath);
+  const base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+
+  const messages: any[] = [
+    {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "You are a captcha solving agent for a browser automation tool. Analyze this image. If you see a captcha, return a strict JSON array of actions to take. Possible actions: {\"action\":\"click_coordinate\",\"targetId\":\"x,y\"}, {\"action\":\"type\",\"text\":\"xyz\"}. Return ONLY JSON, no markdown."
+        },
+        {
+          type: "image_url",
+          image_url: { url: base64Image }
+        }
+      ]
+    }
+  ];
+
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${settings.groqApiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      messages,
+      temperature: 0.1,
+      max_completion_tokens: 1024,
+      top_p: 1
+    })
+  });
+  
+  const json = await res.json();
+  if (!res.ok) throw new Error(`Groq API Error ${res.status}: ${JSON.stringify(json)}`);
+  
+  let content = json.choices?.[0]?.message?.content || JSON.stringify(json);
+  
+  let parsedActions: any[] = [];
+  try {
+    const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    parsedActions = JSON.parse(jsonStr);
+  } catch (e) {
+    // ignore
+  }
+
+  if (Array.isArray(parsedActions) && parsedActions.length > 0) {
+    const batchActions: import('./harness').StructuredAction[] = parsedActions.map((p: any) => {
+      if (p.action === 'click_coordinate' && p.targetId) {
+        return { action: 'click_coordinate', targetId: p.targetId, description: `click coordinate ${p.targetId}` };
+      }
+      if (p.action === 'click' && Array.isArray(p.coordinates)) {
+        return { action: 'click_coordinate', targetId: `${p.coordinates[0]},${p.coordinates[1]}`, description: `click coordinate ${p.coordinates[0]},${p.coordinates[1]}` };
+      }
+      if (p.action === 'type' && p.text) {
+         return { action: 'type', value: p.text, targetId: '', description: `type ${p.text}` };
+      }
+      return null;
+    }).filter(Boolean) as import('./harness').StructuredAction[];
+
+    if (batchActions.length > 0) {
+      return JSON.stringify({ action: 'batch', actions: batchActions, description: 'Solve captcha clicks' });
+    }
+  }
+  
+  return content;
 }

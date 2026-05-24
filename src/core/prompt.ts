@@ -245,7 +245,8 @@ Action protocol:
 - wait: use seconds, max 10.
 - assert_text/assert_url/assert_visible/assert_value/assert_checked/assert_selected/assert_count: use when the expected final state is known. Assertion failures are website bugs only when the expected behavior is clear.
 - screenshot: requires an output path value. Prefer letting the engine collect standard evidence screenshots automatically.
-${input.settings?.enableCaptchaSolver && input.settings?.groqApiKey ? `- solve_captcha: no arguments required. Use this action IMMEDIATELY if you just clicked an 'I'm not a robot' checkbox and suspect a visual captcha challenge (like image tiles) has appeared, or if you encounter any visible verification puzzle. The engine will automatically solve the visual challenge for you.` : ''}
+- click_coordinate: requires targetId in "x,y" format (e.g. "150,300"). Use to click raw coordinates.
+${input.settings?.enableCaptchaSolver && input.settings?.groqApiKey ? `- solve_captcha: no arguments required. Use this action when you encounter a visible captcha, challenge, or verification puzzle.` : ''}
 - navigate: use only to follow an actual intended URL, never to restart the same flow after failure.
 - batch: multiple deterministic sub-actions in one browser turn (configured dynamically, usually up to 50). Use only when confidence is 0.90 or higher, such as filling visible fields then clicking their visible submit/continue control. Do not batch steps that require observing changed DOM between them.
 - request_executor_switch: use only when the current executor is objectively blocked. Set value to "standard-cdp", "browser-use", or "browser-harness-dev". The orchestrator may deny the request.
