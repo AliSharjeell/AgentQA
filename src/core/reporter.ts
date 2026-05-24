@@ -120,6 +120,7 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
   result.verification_summary = {
     status: result.status,
     field_registry_count: result.stats.field_registry_count ?? 0,
+    element_registry_count: result.stats.element_registry_count ?? 0,
     verified_fields_count: result.stats.verified_fields_count ?? 0
   };
   return result;
@@ -174,6 +175,7 @@ export function applyVerifierRuntimeErrorGate(result: QaRunResult, error: Error 
   result.verification_summary = {
     status: 'BLOCKED',
     field_registry_count: result.stats.field_registry_count ?? 0,
+    element_registry_count: result.stats.element_registry_count ?? 0,
     verified_fields_count: 0,
     verifier_error: message
   };
@@ -262,6 +264,11 @@ export function categoryForRootCause(rootCause: QaRootCause | undefined): QaIssu
     case 'VERIFIER_RUNTIME_ERROR': return 'VERIFIER_ISSUE';
     case 'BROWSER_EVALUATION_ERROR': return 'VERIFIER_ISSUE';
     case 'FIELD_REGISTRY_EMPTY': return 'VERIFIER_ISSUE';
+    case 'NO_FIELDS_FOUND':
+    case 'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED':
+    case 'GOAL_NOT_REACHED':
+    case 'REQUIRED_AFFORDANCE_NOT_FOUND':
+    case 'AMBIGUOUS_STATE': return 'AGENT_ISSUE';
     case 'TEST_DATA_ISSUE': return 'TEST_DATA_ISSUE';
     case 'ENVIRONMENT_ISSUE': return 'ENVIRONMENT_ISSUE';
     case 'REPORT_INCONSISTENCY': return 'REPORT_ISSUE';
@@ -501,6 +508,7 @@ function buildStats(actions: QaRunAction[], assertions: QaAssertionResult[], obs
   const allNetworkErrors = observations.reduce((count, observation) => count + (observation.networkErrors?.length || 0), 0);
   const criticalNetworkErrors = observations.reduce((count, observation) => count + (observation.networkErrors?.filter(isCriticalNetworkError).length || 0), 0);
   const fieldRegistry = observations.at(-1)?.fieldRegistry || [];
+  const elementRegistry = observations.at(-1)?.elementRegistry || observations.at(-1)?.availableElements || [];
   
   return {
     actions_total: actions.length,
@@ -514,6 +522,7 @@ function buildStats(actions: QaRunAction[], assertions: QaAssertionResult[], obs
     network_errors: allNetworkErrors,
     critical_network_errors: criticalNetworkErrors,
     field_registry_count: fieldRegistry.length,
+    element_registry_count: elementRegistry.length,
     verified_fields_count: fieldRegistry.filter((field) => field.actual_value !== undefined || field.value !== undefined || field.selected_value !== undefined || field.checked !== undefined).length
   };
 }
@@ -573,7 +582,19 @@ function decideVerdict(
     return { status: 'FAIL', rootCause: 'WEBSITE_BUG', severity: 'HIGH' };
   }
 
-  const failedAgent = assertions.find(a => a.required !== false && a.status === 'FAIL' && (a.rootCause === 'AGENT_INTERNAL_ERROR' || a.rootCause === 'VERIFICATION_MAPPING_ERROR' || a.rootCause === 'TEST_DATA_ISSUE' || a.rootCause === 'ENVIRONMENT_ISSUE' || a.rootCause === 'AGENT_LIMITATION'));
+  const blockedRootCauses: QaRootCause[] = [
+    'AGENT_INTERNAL_ERROR',
+    'VERIFICATION_MAPPING_ERROR',
+    'TEST_DATA_ISSUE',
+    'ENVIRONMENT_ISSUE',
+    'AGENT_LIMITATION',
+    'NO_FIELDS_FOUND',
+    'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED',
+    'GOAL_NOT_REACHED',
+    'REQUIRED_AFFORDANCE_NOT_FOUND',
+    'AMBIGUOUS_STATE'
+  ];
+  const failedAgent = assertions.find(a => a.required !== false && a.status === 'FAIL' && Boolean(a.rootCause && blockedRootCauses.includes(a.rootCause)));
   if (failedAgent) {
     return { status: 'BLOCKED', rootCause: failedAgent.rootCause || 'AGENT_INTERNAL_ERROR', severity: 'HIGH' };
   }
@@ -583,6 +604,9 @@ function decideVerdict(
 
   if (llmReport?.result === 'INFRA_FAILED') {
     return { status: 'INFRA_FAILED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
+  }
+  if (llmReport?.result === 'AGENT_FAILED' && assertions.length === 0) {
+    return { status: 'BLOCKED', rootCause: 'GOAL_NOT_REACHED', severity: 'HIGH' };
   }
 
   const blockedAction = actions.find((action) => action.action_result === 'BLOCKED' || action.verification?.status === 'BLOCKED');
@@ -762,6 +786,11 @@ function recommendationFor(rootCause: QaRootCause | undefined, status: QaVerdict
   if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') return 'No product fix required. Optional: add submit-validation testing on pages that include a submit button.';
   if (rootCause === 'WEBSITE_BUG') return 'Fix the application behavior that contradicted the expected verified state, then rerun the QA test.';
   if (rootCause === 'AGENT_LIMITATION') return 'Improve automation support or selector strategy, then rerun. Do not treat the blocked run as a website bug.';
+  if (rootCause === 'NO_FIELDS_FOUND') return 'Rerun on a page or step with editable controls, or change the task if no form fields are expected.';
+  if (rootCause === 'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED') return 'Check that the page loaded and exposes interactive UI, then rerun with stronger observation evidence.';
+  if (rootCause === 'REQUIRED_AFFORDANCE_NOT_FOUND') return 'Verify the requested control exists and is visible, or adjust the task to an available affordance.';
+  if (rootCause === 'GOAL_NOT_REACHED') return 'Review the action trace and final DOM evidence, then rerun with clearer target state if needed.';
+  if (rootCause === 'AMBIGUOUS_STATE') return 'Collect stronger page evidence or clarify the expected result before making a product bug claim.';
   if (rootCause === 'TEST_DATA_ISSUE') return 'Provide valid test data or credentials and rerun the scenario.';
   if (rootCause === 'ENVIRONMENT_ISSUE') return 'Stabilize the browser/network/site environment and rerun the scenario.';
   return 'Collect stronger evidence or clarify the expected result before making a pass/fail claim.';

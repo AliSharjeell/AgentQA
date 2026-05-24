@@ -9,6 +9,7 @@ const basePlan: QaTestPlan = {
   testId: 'TC-UNIT-001',
   title: 'Unit QA verdict test',
   task: 'Verify unit behavior',
+  taskIntent: 'GENERAL_TASK',
   acceptanceCriteria: [
     { id: 'AC-001', description: 'Required state is verified', assertionIds: ['ASSERT-001'] },
     { id: 'AC-002', description: 'Optional field state is verified', assertionIds: ['ASSERT-002'] }
@@ -109,7 +110,7 @@ describe('QA verdict reporting', () => {
       assertions: [{
         ...passAssertion(),
         status: 'FAIL',
-        expected: 'Cart contains iPhone',
+        expected: 'Cart contains selected item',
         actual: 'Cart is empty',
         rootCause: 'WEBSITE_BUG'
       }]
@@ -266,7 +267,8 @@ describe('QA verdict reporting', () => {
     const formPlan: QaTestPlan = {
       ...basePlan,
       testId: 'TC-FORM-001',
-      title: 'Verify form fillability'
+      title: 'Verify form fillability',
+      taskIntent: 'FORM_INTERACTION'
     };
     const result = buildQaRunResult({
       runId: 'qa-run-unit',
@@ -342,7 +344,7 @@ describe('Validator LLM Gating', () => {
       assertions: [{
         ...passAssertion(),
         status: 'FAIL',
-        expected: 'Cart contains iPhone',
+        expected: 'Cart contains selected item',
         actual: 'Cart is empty',
         rootCause: 'WEBSITE_BUG'
       }]

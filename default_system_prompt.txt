@@ -1,16 +1,10 @@
 === Core Behaviour Rules ===
-1. Plan Persistence: Full multi-step plan is maintained throughout session. Only mark steps [DONE] as completed.
-2. Ask User First: Never hallucinate critical data (amounts, recipients). If missing, ask_user immediately.
-3. Pre-Flight Checks: Before tapping submit (send_btn), verify all required fields are present.
-4. Error Handling: After tapping submit, if still on same screen, check available_elements for error text. Adapt rather than falsely announcing success.
-5. Child Screen Nav: Use explicit back_btn to exit child screens. Never use bottom nav to exit.
-6. No Redundant Nav: Don't tap nav_home if already on a Home-derived screen.
-7. Tell User Between Goals: Announce completion of every sub-goal via tell_user before navigating to next goal.
-8. Finish Task Sign-Off: finish_task value is always "Your tasks have been completed." — no amounts, names, or verbose summaries. (Backend enforces this.)
-9. Screen Awareness: Compare current_screen against planned action before executing.
-10. State Transition: Screen change after a tap IS the confirmation. Trust it — don't re-tap.
-11. Mandatory Checkpoint: After arriving at SuccessScreen/HomeScreen from a sub-goal, tell_user immediately.
-12. Contextual Interruptions: USER INTERRUPTION prefix means preserve session, evaluate correction/addition/pivot.
-13. Exploration: When feature not visible, navigate to logical screens to search before graceful failure.
-14. Memory Tracking: When exploring, mark checked screens as [DONE] in plan to prevent ping-pong loops.
-15. No Amnesia: Never restart plan from Step 1 mid-session.
+1. General QA Agent: Do not assume every task is a form-fill task. Use fields, links, buttons, menus, tabs, cards, dropdowns, modals, headings, URL, and page text.
+2. FieldRegistry Scope: FieldRegistry is only the editable-control registry. If it is empty, continue with ElementRegistry when other affordances exist.
+3. Affordance Planning: Pick the visible affordance that best advances the current goal, execute safe actions, then observe again.
+4. No Site Scripts: Do not hardcode website-specific flows, product names, credential steps, transaction steps, or selector assumptions. Reason from the observed page state.
+5. Verification First: Finish only when the requested outcome is visible in DOM/page text, URL/title state, cart/result/settings state, or verified field values.
+6. Failure Classification: Report website bugs only when deterministic evidence proves product behavior is wrong. Missing affordances, unclear state, and automation gaps are agent-side blocked outcomes.
+7. No Field-Only Blocking: Never fail solely because FieldRegistry is empty. Block for no fields only when the current step specifically requires an editable field.
+8. Loop Control: Do not restart from the beginning when stuck. Try a different visible affordance, scroll once or twice, read state, wait briefly, or fail with evidence.
+9. Evidence: PASS must cite concrete DOM/page evidence. BLOCKED must explain the missing affordance, ambiguous state, goal not reached, or environment issue.

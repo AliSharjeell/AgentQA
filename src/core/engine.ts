@@ -17,6 +17,7 @@ import { createTestPlan } from './planner';
 import { buildQaRunResult, applyValidatorGating, applyVerifierRuntimeErrorGate, writeQaReportFiles } from './reporter';
 import { verifyAction, verifyPlanAssertions } from './verification';
 import { runValidatorAudit } from './validator';
+import { detectGoalCompletion, elementRegistryForObservation, resolveInitialObservationReadiness } from './intent';
 
 export interface TaskStep {
   instruction: string;
@@ -73,6 +74,7 @@ function emptyObservation(targetUrl: string): PageObservation {
   return {
     taskUrl: targetUrl,
     page: { url: targetUrl, title: '' },
+    elementRegistry: [],
     availableElements: [],
     interactiveElements: [],
     fieldRegistry: [],
@@ -85,12 +87,14 @@ function emptyObservation(targetUrl: string): PageObservation {
 function parseObservation(raw: string, targetUrl: string): PageObservation {
   try {
     const parsed = JSON.parse(raw) as Partial<PageObservation>;
-    const elements = parsed.availableElements || parsed.interactiveElements || [];
+    const elementRegistry = parsed.elementRegistry || parsed.availableElements || parsed.interactiveElements || [];
+    const elements = parsed.availableElements || elementRegistry;
     return {
       taskUrl: parsed.taskUrl || targetUrl,
       page: parsed.page || { url: targetUrl, title: '' },
+      elementRegistry,
       availableElements: elements,
-      interactiveElements: elements,
+      interactiveElements: parsed.interactiveElements || elementRegistry,
       fieldRegistry: parsed.fieldRegistry || [],
       pageText: parsed.pageText || '',
       consoleErrors: parsed.consoleErrors || [],
@@ -229,12 +233,12 @@ function isRestartNavigation(action: AgentAction, targetUrl: string, history: Ag
 
 function findTarget(action: AgentAction, observation: PageObservation): ObservedElement | null {
   if (!isStructuredAction(action) || !action.targetId) return null;
-  return observation.availableElements.find((el) => el.id === action.targetId) || null;
+  return elementRegistryForObservation(observation).find((el) => el.id === action.targetId) || null;
 }
 
 function targetForId(targetId: string | undefined, observation: PageObservation): ObservedElement | null {
   if (!targetId) return null;
-  return observation.availableElements.find((el) => el.id === targetId) || null;
+  return elementRegistryForObservation(observation).find((el) => el.id === targetId) || null;
 }
 
 function actionRequiresTarget(action: StructuredAction): boolean {
@@ -311,6 +315,17 @@ function resolveExecutableAction(action: StructuredAction, observation: PageObse
   };
 }
 
+function rootCauseForActionResolutionError(error: string): import('../shared/types').QaRootCause {
+  const normalized = error.toLowerCase();
+  if (normalized.includes('target') && (normalized.includes('not available') || normalized.includes('unavailable') || normalized.includes('missing'))) {
+    return 'REQUIRED_AFFORDANCE_NOT_FOUND';
+  }
+  if (normalized.includes('requires value') || normalized.includes('requires url')) {
+    return 'AGENT_LIMITATION';
+  }
+  return 'AGENT_LIMITATION';
+}
+
 function mergeFaults(existing: QaFault[], incoming: QaFault[]): QaFault[] {
   const merged = [...existing];
   const seen = new Set(merged.map((fault) => `${fault.type}|${fault.title}|${fault.url}|${fault.step}`));
@@ -333,8 +348,7 @@ function mergeFaults(existing: QaFault[], incoming: QaFault[]): QaFault[] {
 }
 
 function faultToBug(fault: QaFault): string | null {
-  if (!['site_bug', 'validation_issue', 'blocked_flow', 'console_error'].includes(fault.type)) return null;
-  if (fault.type === 'console_error' && fault.severity === 'warning') return null;
+  if (!['site_bug', 'validation_issue'].includes(fault.type)) return null;
   return `${fault.title}: ${fault.details}`;
 }
 
@@ -809,29 +823,46 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   }
 
   observation = initial.observation;
-  
-  if (!observation.fieldRegistry || observation.fieldRegistry.length === 0) {
+  rememberObservation(observation);
+
+  const readiness = resolveInitialObservationReadiness(prompt, observation);
+  if (readiness.status === 'blocked') {
+    qaActions.push({
+      action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
+      action: 'observe',
+      target: 'initial page',
+      action_result: 'BLOCKED',
+      verification: {
+        expected: readiness.rootCause === 'NO_FIELDS_FOUND'
+          ? 'Editable controls available for the form-focused task'
+          : 'Interactive page affordances available',
+        actual: readiness.summary,
+        status: 'BLOCKED',
+        rootCause: readiness.rootCause,
+        message: readiness.summary
+      },
+      timestamp: new Date().toISOString()
+    });
     const report = makeReport({
-      result: 'INFRA_FAILED',
+      result: 'AGENT_FAILED',
       scenario: prompt,
-      summary: 'Page loaded but no editable fields were discovered (FieldRegistry is empty).',
+      summary: readiness.summary,
       finalUrl: targetUrl,
       history,
       faults: [{
         severity: 'critical',
-        type: 'infra',
-        title: 'FieldRegistry empty',
-        details: 'Initial browser observation found 0 fields.',
+        type: 'agent_issue',
+        title: readiness.rootCause === 'NO_FIELDS_FOUND' ? 'No editable fields found' : 'No interactive affordances found',
+        details: readiness.summary,
         evidence: [],
         url: targetUrl,
         step: 'initial observation'
       }],
       evidence: []
     });
-    return finishWithReport({ ...report, result: 'INFRA_FAILED' }, 'No fields discovered.', targetUrl);
+    return finishWithReport(report, readiness.summary, targetUrl);
   }
 
-  rememberObservation(observation);
   currentUrl = observation.page.url || targetUrl;
   faults = addConsoleFaults(faults, observation, 'initial observation');
   lastActionResult = `Loaded ${currentUrl}`;
@@ -840,6 +871,35 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   if (initialScreenshot) evidence.push(initialScreenshot);
   const navigationScreenshot = await evidenceCollector.captureScreenshot(executor, '01_after_navigation.png', { required: true });
   if (navigationScreenshot) evidence.push(navigationScreenshot);
+
+  const initialCompletion = detectGoalCompletion({
+    task: prompt,
+    intent: testPlan.taskIntent,
+    observation,
+    llmReport: null,
+    evidence,
+    actions: qaActions
+  });
+  if (initialCompletion.passed) {
+    history.push({
+      step: 0,
+      action: 'deterministic_completion',
+      status: 'success',
+      result: initialCompletion.evidence[0] || 'Requested outcome was already visible in the initial DOM.',
+      url: currentUrl
+    });
+    const report = makeReport({
+      result: 'PASS',
+      scenario: prompt,
+      summary: 'Requested outcome was verified from the initial DOM/page state.',
+      finalUrl: currentUrl,
+      history,
+      faults,
+      evidence: initialCompletion.evidence,
+      consoleErrors: observation.consoleErrors
+    });
+    return finishWithReport(report, 'Initial deterministic completion reached.', currentUrl);
+  }
 
   for (let stepNum = 1; stepNum <= maxSteps; stepNum++) {
     addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'running');
@@ -1095,6 +1155,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     const resolved = resolveExecutableAction(action, observation, settings);
     if (resolved.error || !resolved.action) {
       const result = resolved.error || 'Action could not be resolved against the current DOM observation.';
+      const rootCause = rootCauseForActionResolutionError(result);
       history.push({ step: stepNum, action: action.action, targetId: action.targetId, status: 'failed', result, url: currentUrl });
       qaActions.push({
         action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
@@ -1106,13 +1167,13 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
           expected: 'Executable action resolved against current DOM',
           actual: result,
           status: 'BLOCKED',
-          rootCause: 'AGENT_LIMITATION',
+          rootCause,
           message: result
         },
         timestamp: new Date().toISOString()
       });
       lastActionResult = result;
-      resetDirective = `The requested target was not present. Select a visible targetId from the current available elements, scroll, read state, or fail with evidence.`;
+      resetDirective = `The requested target was not present. Select a visible targetId from the current element registry, scroll, read state, or fail with evidence.`;
       continue;
     }
 
@@ -1177,6 +1238,35 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       }
       resetDirective = null;
       if (signature !== blockedActionSignature) blockedActionSignature = null;
+
+      const completion = detectGoalCompletion({
+        task: prompt,
+        intent: testPlan.taskIntent,
+        observation,
+        llmReport: null,
+        evidence,
+        actions: qaActions
+      });
+      if (completion.passed && testPlan.taskIntent !== 'FORM_INTERACTION') {
+        history.push({
+          step: stepNum,
+          action: 'deterministic_completion',
+          status: 'success',
+          result: completion.evidence[0] || 'Requested outcome was visible in the final DOM.',
+          url: currentUrl
+        });
+        const report = makeReport({
+          result: 'PASS',
+          scenario: prompt,
+          summary: 'Requested outcome was verified from the DOM/page state.',
+          finalUrl: currentUrl,
+          history,
+          faults,
+          evidence: completion.evidence,
+          consoleErrors: observation.consoleErrors
+        });
+        return finishWithReport(report, 'Deterministic completion reached.', currentUrl);
+      }
 
       // Check for deterministic completion of form fillability tasks
       if (testPlan.testId === 'TC-FORM-001' && result.ok && globalFieldRegistry.length > 0) {

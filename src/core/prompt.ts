@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentExecutorKind, AgentRunMode } from '../shared/types';
 import type { PageObservation, QaFault } from './harness';
+import { detectTaskIntent, elementRegistryForObservation } from './intent';
 
 export interface AgentPlanStep {
   step: number;
@@ -48,15 +49,32 @@ function getCoreBehaviourRules(): string {
   }
 
   return `Core behavior rules:
-1. Maintain the full task plan and mark only verified steps as DONE.
-2. Use the current page state. Do not restart the flow when stuck.
-3. If a tactic fails, choose a different visible element, scroll, read state, wait, or fail with evidence.
-4. Never claim PASS without DOM/page evidence.
-5. Log confirmed site faults separately from agent/tool failures.`;
+1. You are a general QA agent. Do not assume every task is a form-fill task.
+2. Use the full observed page state: fields, buttons, links, menus, search controls, product cards, headings, text, modals, and navigation.
+3. If no editable fields exist, continue with other interactive elements. Do not stop because FieldRegistry is empty.
+4. Maintain the full task plan and mark only verified steps as DONE.
+5. If a tactic fails, choose a different visible affordance, scroll, read state, wait, or fail with evidence.
+6. Never claim PASS without DOM/page evidence.
+7. Only report a website bug when deterministic evidence proves the product behavior is wrong.`;
+}
+
+function summarizeFields(observation: PageObservation): string {
+  return (observation.fieldRegistry || [])
+    .slice(0, 80)
+    .map((field) => {
+      const flags = [
+        field.value ? `value=${String(field.value).slice(0, 80)}` : '',
+        field.selected_label ? `selected=${field.selected_label}` : '',
+        typeof field.checked === 'boolean' ? `checked=${field.checked}` : '',
+        field.selector ? `selector=${field.selector.slice(0, 90)}` : ''
+      ].filter(Boolean).join(', ');
+      return `- ${field.temporary_observation_id} / ${field.field_id} (${field.type}): "${field.label}"${flags ? ` [${flags}]` : ''}`;
+    })
+    .join('\n') || 'No editable fields detected.';
 }
 
 function summarizeElements(observation: PageObservation): string {
-  return observation.availableElements
+  return elementRegistryForObservation(observation)
     .slice(0, 100)
     .map((el) => {
       const flags = [
@@ -99,6 +117,7 @@ function summarizeFaults(faults: QaFault[]): string {
 }
 
 export function buildPrompt(input: PromptInput): string {
+  const taskIntent = detectTaskIntent(input.taskName);
   const visionRules = input.visionMode
     ? `Vision mode is enabled. You may report visual bugs only when backed by screenshot or DOM/visual evidence available in context.`
     : `Text mode is enabled. Do not report visual-only bugs as confirmed. Add a warning if a visual check is required but unavailable.`;
@@ -110,6 +129,7 @@ Task: ${input.taskName}
 Target URL: ${input.targetUrl}
 Current URL: ${input.currentUrl}
 Current title: ${input.observation.page.title || ''}
+Task intent: ${taskIntent.intent} (${taskIntent.verificationStyle})
 Run mode: ${input.mode || 'standard'}
 Current executor: ${input.currentExecutor || 'standard-cdp'}
 Executor escalation allowed: ${input.allowEscalation ? 'yes' : 'no'}
@@ -127,7 +147,10 @@ ${summarizeFaults(input.faults)}
 ${input.resetDirective ? `Loop reset directive:\n${input.resetDirective}\n` : ''}
 ${input.blockedActionSignature ? `Forbidden next action signature: ${input.blockedActionSignature}\n` : ''}
 
-Available elements:
+FieldRegistry (editable controls only):
+${summarizeFields(input.observation)}
+
+ElementRegistry (all observed interactive affordances):
 ${summarizeElements(input.observation)}
 
 Page text excerpt:
@@ -146,7 +169,7 @@ QA result classification:
 
 Action protocol:
 - click: requires targetId.
-- fill/type: requires targetId and value. Use fill for form fields; type is kept as an alias.
+- fill/type: requires targetId and value. Use only for editable controls in FieldRegistry or clearly editable targets in ElementRegistry.
 - select: requires targetId and value. Use for native <select>, comboboxes, dropdowns, listboxes, and menu/list choices when the desired option text/value is known. The engine verifies the selected DOM value after the action.
 - check/uncheck/radio: requires targetId and verifies checked state after the action.
 - hover: requires targetId.
@@ -159,7 +182,7 @@ Action protocol:
 - assert_text/assert_url/assert_visible/assert_value/assert_checked/assert_selected/assert_count: use when the expected final state is known. Assertion failures are website bugs only when the expected behavior is clear.
 - screenshot: requires an output path value. Prefer letting the engine collect standard evidence screenshots automatically.
 - navigate: use only to follow an actual intended URL, never to restart the same flow after failure.
-- batch: multiple deterministic sub-actions in one browser turn (configured dynamically, usually up to 50). Use only when confidence is 0.90 or higher, such as filling a visible login form then clicking its visible submit button, filling a checkout form then continuing, or clicking several visible known product add buttons. Do not batch steps that require observing changed DOM between them.
+- batch: multiple deterministic sub-actions in one browser turn (configured dynamically, usually up to 50). Use only when confidence is 0.90 or higher, such as filling visible fields then clicking their visible submit/continue control. Do not batch steps that require observing changed DOM between them.
 - request_executor_switch: use only when the current executor is objectively blocked. Set value to "standard-cdp", "browser-use", or "browser-harness-dev". The orchestrator may deny the request.
 - finish_task: only when PASS/FAIL/AGENT_FAILED/INFRA_FAILED report is ready.
 - fail_task: when you must stop with a non-PASS report.
@@ -168,6 +191,10 @@ Important:
 - The original task text is authoritative. Do not rewrite, shorten, or replace the scenario.
 - If the task contains a numbered checklist, every numbered item must be completed or explicitly failed before PASS.
 - Do not restart the task from the beginning when stuck.
+- You are not limited to form fields. Use clickable links, buttons, menus, nav bars, search boxes, filters, cards, dropdowns, modals, forms, page text, and headings.
+- For each step: understand the current goal, pick the most relevant visible affordance, execute safe action(s), observe again, and stop only when the goal can be verified.
+- If FieldRegistry is empty but ElementRegistry has usable affordances, continue planning with ElementRegistry.
+- Only block on missing fields when the current step specifically requires an editable field.
 - Prefer a high-confidence batch for obvious forms with all required fields and submit button visible. Include "confidence": 0.90 or higher. If not that certain, use one action.
 - For native select elements with listed options, use select with the exact visible option label or option value.
 - For custom dropdowns/comboboxes, click or select the control, then observe/select a visible role=option/menuitem/list option. If the popup has a search field, type into the searchbox/textbox first and press_key Enter only when that is how the widget confirms.
@@ -179,6 +206,7 @@ Important:
 - If selecting product options, choose the required base/default option from current DOM text and verify selection before add-to-cart.
 - Keep a QA fault log. A failed automation action is not automatically a site bug.
 - PASS must cite exact DOM/cart evidence when the task requires exact product names or cart contents.
+- If the task cannot progress because the needed UI affordance is missing, report AGENT_FAILED with a clear REQUIRED_AFFORDANCE_NOT_FOUND reason.
 - ${visionRules}
 
 Return exactly this JSON shape:

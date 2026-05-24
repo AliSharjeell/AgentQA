@@ -73,6 +73,7 @@ function emptyObservation(targetUrl: string): PageObservation {
   return {
     taskUrl: targetUrl,
     page: { url: targetUrl, title: '' },
+    elementRegistry: [],
     availableElements: [],
     interactiveElements: [],
     pageText: '',
@@ -84,12 +85,14 @@ function emptyObservation(targetUrl: string): PageObservation {
 export function parsePageObservation(raw: string, targetUrl: string): PageObservation {
   try {
     const parsed = JSON.parse(raw) as Partial<PageObservation>;
-    const elements = parsed.availableElements || parsed.interactiveElements || [];
+    const elementRegistry = parsed.elementRegistry || parsed.availableElements || parsed.interactiveElements || [];
+    const elements = parsed.availableElements || elementRegistry;
     return {
       taskUrl: parsed.taskUrl || targetUrl,
       page: parsed.page || { url: targetUrl, title: '' },
+      elementRegistry,
       availableElements: elements,
-      interactiveElements: elements,
+      interactiveElements: parsed.interactiveElements || elementRegistry,
       fieldRegistry: (parsed as any).fieldRegistry || [],
       pageText: parsed.pageText || '',
       consoleErrors: parsed.consoleErrors || [],

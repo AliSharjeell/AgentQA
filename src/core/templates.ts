@@ -3,24 +3,21 @@ import type { QaTemplate } from '../shared/types';
 export const QA_TEMPLATES: QaTemplate[] = [
   {
     id: 'full-form-fill',
-    title: 'Full Form Fill Test',
+    title: 'Form Interaction Test',
     category: 'form',
-    url: 'https://www.roboform.com/filling-test-all-fields',
-    task: 'Fill the form with dummy data and check if all fields are fillable.'
+    task: 'Fill the visible editable fields with safe dummy data and verify the final field values.'
   },
   {
-    id: 'login-negative',
-    title: 'Login Negative Test',
-    category: 'login',
-    url: 'https://www.saucedemo.com/',
-    task: 'Try logging in with invalid credentials and verify the app shows a proper error message. Use username invalid_user and password wrong_password.'
+    id: 'auth-negative',
+    title: 'Authentication Negative Test',
+    category: 'auth',
+    task: 'When an authentication form is available, try safe invalid test credentials and verify the final success or error state.'
   },
   {
-    id: 'ecommerce-add-to-cart',
-    title: 'E-commerce Add-to-Cart Flow',
-    category: 'ecommerce',
-    url: 'https://ecommerce-playground.lambdatest.io/',
-    task: 'Search for iPhone, open product details, add it to cart, and verify cart contains the item.'
+    id: 'transaction-cart',
+    title: 'Cart/Transaction Flow',
+    category: 'transaction',
+    task: 'Find a requested item, select required visible options, add it to the cart or bag, and verify the final cart state.'
   },
   {
     id: 'responsive-mobile-smoke',
@@ -44,4 +41,3 @@ export function getQaTemplate(templateId: string | undefined): QaTemplate | null
   if (!templateId) return null;
   return QA_TEMPLATES.find((template) => template.id === templateId) ?? null;
 }
-

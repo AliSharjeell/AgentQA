@@ -119,7 +119,7 @@ describe('Provider transient error handling', () => {
   describe('B. Provider overload after task already complete', () => {
     it('form already filled - unnecessary next plan returns 529 - agent skips further planning', async () => {
       // Simulate form fillability task that is already complete
-      const fieldRegistry = [
+      const fieldRegistry: Array<{ field_id: string; planned_value: string; actual_value?: string; selected_value?: string; checked?: boolean }> = [
         { field_id: 'f1', planned_value: 'test@test.com', actual_value: 'test@test.com' },
         { field_id: 'f2', planned_value: 'John Doe', actual_value: 'John Doe' },
         { field_id: 'f3', planned_value: '1234567890', actual_value: '1234567890' },

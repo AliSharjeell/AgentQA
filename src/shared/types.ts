@@ -43,6 +43,16 @@ export type AgentRunMode = "standard" | "browser-use" | "advanced";
 
 export type AgentExecutorKind = "registry-app" | "standard-cdp" | "browser-use" | "browser-harness-dev";
 
+export type QaTaskIntent =
+  | "FORM_INTERACTION"
+  | "AUTH_FLOW"
+  | "SEARCH_OR_DISCOVERY"
+  | "NAVIGATION"
+  | "TRANSACTION_OR_CART"
+  | "SETTINGS_CHANGE"
+  | "CONTENT_VERIFICATION"
+  | "GENERAL_TASK";
+
 export type AgentElementType =
   | "button"
   | "input"
@@ -52,6 +62,16 @@ export type AgentElementType =
   | "select"
   | "list"
   | "image"
+  | "menu"
+  | "menuitem"
+  | "tab"
+  | "card"
+  | "dialog"
+  | "combobox"
+  | "searchbox"
+  | "option"
+  | "accordion"
+  | "dropdown"
   | "unknown";
 
 export type AgentActionName =
@@ -105,6 +125,11 @@ export type QaRootCause =
   | "VERIFIER_RUNTIME_ERROR"
   | "BROWSER_EVALUATION_ERROR"
   | "FIELD_REGISTRY_EMPTY"
+  | "NO_FIELDS_FOUND"
+  | "PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED"
+  | "GOAL_NOT_REACHED"
+  | "REQUIRED_AFFORDANCE_NOT_FOUND"
+  | "AMBIGUOUS_STATE"
   | "LLM_PROVIDER_UNAVAILABLE";
 
 export type QaSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
@@ -151,6 +176,35 @@ export interface FieldRegistryEntry {
 }
 
 export type FieldRegistry = FieldRegistryEntry[];
+
+export interface ElementRegistryEntry {
+  id: string;
+  type: string;
+  description: string;
+  value?: string | null;
+  text?: string;
+  options?: Array<{
+    value: string;
+    label: string;
+    selected?: boolean;
+    disabled?: boolean;
+  }>;
+  tag: string;
+  selector: string;
+  href?: string;
+  role?: string;
+  name?: string;
+  classes?: string;
+  x: number;
+  y: number;
+  visible: boolean;
+  disabled?: boolean;
+  checked?: boolean;
+  selected?: boolean;
+  expanded?: boolean;
+}
+
+export type ElementRegistry = ElementRegistryEntry[];
 
 export interface AgentBoundingBox {
   x: number;
@@ -323,6 +377,7 @@ export interface QaRunStats {
   network_errors: number;
   critical_network_errors?: number;
   field_registry_count?: number;
+  element_registry_count?: number;
   verified_fields_count?: number;
 }
 
@@ -373,6 +428,7 @@ export interface QaRunResult {
   verification_summary?: {
     status: QaVerdict;
     field_registry_count: number;
+    element_registry_count?: number;
     verified_fields_count: number;
     verifier_error?: string;
   };
@@ -584,7 +640,7 @@ export interface QaTemplate {
   title: string;
   task: string;
   url?: string;
-  category: "form" | "login" | "ecommerce" | "responsive" | "accessibility";
+  category: "form" | "auth" | "transaction" | "responsive" | "accessibility";
 }
 
 // ─── App Status ─────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ const plan: QaTestPlan = {
   testId: 'TC-FORM-001',
   title: 'Verify form fields',
   task: 'Fill all fields',
+  taskIntent: 'FORM_INTERACTION',
   acceptanceCriteria: [],
   assertions: [],
   edgeCases: []

@@ -9,6 +9,7 @@ import type {
 import type { ExecutorActionOutcome } from './executor';
 import type { CliReport, ObservedElement, PageObservation, StructuredAction } from './harness';
 import type { QaAssertionSpec, QaTestPlan } from './planner';
+import { detectGoalCompletion, elementRegistryForObservation } from './intent';
 import { redactSensitiveText, redactValue } from './sanitize';
 
 export function verifyAction(input: {
@@ -112,12 +113,22 @@ export function verifyPlanAssertions(input: {
   evidence: string[];
   actions: QaRunAction[];
 }): QaAssertionResult[] {
-  if (input.actions.length === 0) {
-    return [];
-  }
   const actionAssertions = verifyAssertionsFromPlannedActions(input.actions, input.observation, input.evidence);
   if (input.plan.testId === 'TC-FORM-001' && actionAssertions.length > 0) {
     return actionAssertions;
+  }
+  if (input.plan.testId === 'TC-FORM-001' && (input.observation.fieldRegistry?.length || 0) === 0) {
+    return [blockedAssertion(
+      input.plan.assertions[0] || {
+        id: 'ASSERT-NO-FIELDS',
+        description: 'Editable fields are available for the form task',
+        kind: 'objective_verified',
+        required: true,
+        acceptanceCriteriaId: 'AC-001'
+      },
+      'The task is form-focused, but no editable controls were discovered on the page.',
+      'NO_FIELDS_FOUND'
+    )];
   }
   return input.plan.assertions.map((spec) => verifyPlanAssertion(spec, input.observation, input.llmReport, input.evidence, input.actions));
 }
@@ -197,11 +208,12 @@ function verificationForAction(
   outcome: ExecutorActionOutcome
 ): QaVerificationResult {
   if (!outcome.ok) {
+    const rootCause = rootCauseForFailedAction(outcome.message);
     return {
       expected: expectedForFailedAction(action),
       actual: outcome.message,
-      status: isAgentLimitation(outcome.message) ? 'BLOCKED' : 'FAIL',
-      rootCause: isAgentLimitation(outcome.message) ? 'AGENT_LIMITATION' : 'AMBIGUOUS',
+      status: 'BLOCKED',
+      rootCause,
       message: outcome.message
     };
   }
@@ -336,7 +348,7 @@ function verifyPlanAssertion(
     case 'accessibility_basic':
       return verifyAccessibilityBasicAssertion(spec, observation);
     case 'objective_verified':
-      return verifyObjectiveAssertion(spec, llmReport, evidence);
+      return verifyObjectiveAssertion(spec, observation, llmReport, evidence, actions);
     default:
       return blockedAssertion(spec, 'Unsupported assertion kind.', 'AGENT_LIMITATION');
   }
@@ -613,7 +625,7 @@ function verifyNoOverflowAssertion(spec: QaAssertionSpec, observation: PageObser
 function verifyAccessibilityBasicAssertion(spec: QaAssertionSpec, observation: PageObservation): QaAssertionResult {
   const hasTitle = Boolean(observation.page.title);
   const hasText = Boolean(observation.pageText.trim());
-  const inputsWithoutNames = observation.availableElements.filter((element) => {
+  const inputsWithoutNames = elementRegistryForObservation(observation).filter((element) => {
     if (!['input', 'email', 'password', 'text', 'textarea', 'checkbox', 'radio', 'select'].includes(element.type)) return false;
     return !element.description && !element.name;
   }).length;
@@ -632,20 +644,28 @@ function verifyAccessibilityBasicAssertion(spec: QaAssertionSpec, observation: P
 
 function verifyObjectiveAssertion(
   spec: QaAssertionSpec,
+  observation: PageObservation,
   llmReport: CliReport | null | undefined,
-  evidence: string[]
+  evidence: string[],
+  actions: QaRunAction[]
 ): QaAssertionResult {
-  const passed = llmReport?.result === 'PASS' && evidence.length > 0;
+  const completion = detectGoalCompletion({
+    task: String(spec.expected || spec.description),
+    observation,
+    llmReport,
+    evidence,
+    actions
+  });
   return {
     id: spec.id,
     description: spec.description,
-    expected: true,
-    actual: passed,
-    status: passed ? 'PASS' : 'BLOCKED',
-    rootCause: passed ? undefined : 'AMBIGUOUS',
+    expected: completion.expected,
+    actual: completion.actual,
+    status: completion.status,
+    rootCause: completion.rootCause,
     required: spec.required,
-    evidence,
-    message: passed ? undefined : 'The final objective was not proven by a PASS report with evidence.'
+    evidence: completion.evidence,
+    message: completion.message
   };
 }
 
@@ -685,9 +705,10 @@ function findCurrentElement(observation: PageObservation, target: ObservedElemen
     if (bySelector) return bySelector;
   }
   
-  return observation.availableElements.find((element) => element.selector === target.selector) ||
-    observation.availableElements.find((element) => element.name && element.name === target.name) ||
-    observation.availableElements.find((element) => element.description && element.description === target.description) ||
+  const elements = elementRegistryForObservation(observation);
+  return elements.find((element) => element.selector === target.selector) ||
+    elements.find((element) => element.name && element.name === target.name) ||
+    elements.find((element) => element.description && element.description === target.description) ||
     null;
 }
 
@@ -711,18 +732,20 @@ function findElement(observation: PageObservation, spec: QaAssertionSpec): Field
     if (byHint) return byHint;
   }
 
-  // Fallback to availableElements
+  const elements = elementRegistryForObservation(observation);
+
+  // Fallback to ElementRegistry
   for (const selector of selectors) {
-    const exact = observation.availableElements.find((element) => normalize(element.selector) === normalize(selector));
+    const exact = elements.find((element) => normalize(element.selector) === normalize(selector));
     if (exact) return exact;
   }
   for (const selector of selectors) {
-    const partial = observation.availableElements.find((element) => normalize(element.selector).includes(normalize(selector.replace(/["']/g, ''))));
+    const partial = elements.find((element) => normalize(element.selector).includes(normalize(selector.replace(/["']/g, ''))));
     if (partial) return partial;
   }
 
   const hints = spec.textHints || [];
-  return observation.availableElements.find((element) => {
+  return elements.find((element) => {
     const haystack = normalize(`${element.description} ${element.name} ${element.selector} ${element.text} ${element.value}`);
     return hints.some((hint) => haystack.includes(normalize(hint)));
   }) ?? null;
@@ -745,7 +768,7 @@ function findElementForAction(observation: PageObservation, action: QaRunAction)
   }
 
   if (action.selector) {
-    const available = observation.availableElements.find((element) => element.selector === action.selector);
+    const available = elementRegistryForObservation(observation).find((element) => element.selector === action.selector);
     if (available) return available;
   }
 
@@ -786,6 +809,21 @@ function isAgentLimitation(message: string): boolean {
     normalized.includes('option lookup failed') ||
     normalized.includes('no visible custom option') ||
     normalized.includes('element not found');
+}
+
+function rootCauseForFailedAction(message: string): QaRootCause {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('element not found') ||
+    normalized.includes('target element is required') ||
+    normalized.includes('no visible custom option') ||
+    normalized.includes('option lookup failed')) {
+    return 'REQUIRED_AFFORDANCE_NOT_FOUND';
+  }
+  if (isAgentLimitation(message)) return 'AGENT_LIMITATION';
+  if (normalized.includes('timeout') || normalized.includes('navigation') || normalized.includes('network')) {
+    return 'ENVIRONMENT_ISSUE';
+  }
+  return 'AMBIGUOUS_STATE';
 }
 
 function parseExpectedBoolean(value: unknown, fallback: boolean): boolean {

@@ -1,4 +1,5 @@
-import type { QaTemplate } from '../shared/types';
+import type { QaTaskIntent, QaTemplate } from '../shared/types';
+import { detectTaskIntent } from './intent';
 import { getQaTemplate } from './templates';
 
 export type QaAssertionKind =
@@ -42,19 +43,11 @@ export interface QaTestPlan {
   testId: string;
   title: string;
   task: string;
+  taskIntent: QaTaskIntent;
   templateId?: string;
   acceptanceCriteria: QaAcceptanceCriterionSpec[];
   assertions: QaAssertionSpec[];
   edgeCases: string[];
-}
-
-function normalize(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function matchesPrompt(prompt: string, targetUrl: string, needles: string[]): boolean {
-  const haystack = normalize(`${prompt} ${targetUrl}`);
-  return needles.some((needle) => haystack.includes(normalize(needle)));
 }
 
 export function createTestPlan(input: {
@@ -65,19 +58,20 @@ export function createTestPlan(input: {
   const template = getQaTemplate(input.templateId);
   if (template) return planForTemplate(template, input.prompt, input.targetUrl);
 
-  if (matchesPrompt(input.prompt, input.targetUrl, ['roboform', 'all fields', 'fillable'])) {
-    return fullFormPlan(input.prompt);
-  }
-  if (matchesPrompt(input.prompt, input.targetUrl, ['saucedemo', 'invalid credentials', 'wrong_password'])) {
-    return loginNegativePlan(input.prompt);
-  }
-  if (matchesPrompt(input.prompt, input.targetUrl, ['add to cart', 'ecommerce', 'iphone'])) {
-    return ecommercePlan(input.prompt);
-  }
-  if (matchesPrompt(input.prompt, input.targetUrl, ['mobile viewport', 'responsive', 'horizontal overflow'])) {
+  const intent = detectTaskIntent(input.prompt).intent;
+  if (intent === 'FORM_INTERACTION') return formInteractionPlan(input.prompt);
+  if (intent === 'AUTH_FLOW') return authFlowPlan(input.prompt);
+  if (intent === 'SEARCH_OR_DISCOVERY') return searchDiscoveryPlan(input.prompt);
+  if (intent === 'NAVIGATION') return navigationPlan(input.prompt);
+  if (intent === 'TRANSACTION_OR_CART') return transactionPlan(input.prompt);
+  if (intent === 'SETTINGS_CHANGE') return settingsPlan(input.prompt);
+  if (intent === 'CONTENT_VERIFICATION') return contentPlan(input.prompt);
+
+  const promptText = input.prompt.toLowerCase();
+  if (/\bmobile\b|\bresponsive\b|\bhorizontal overflow\b/.test(promptText)) {
     return responsivePlan(input.prompt);
   }
-  if (matchesPrompt(input.prompt, input.targetUrl, ['accessibility', 'aria', 'alt text'])) {
+  if (/\baccessibility\b|\baria\b|\balt text\b/.test(promptText)) {
     return accessibilityPlan(input.prompt);
   }
 
@@ -87,11 +81,11 @@ export function createTestPlan(input: {
 function planForTemplate(template: QaTemplate, prompt: string, targetUrl: string): QaTestPlan {
   switch (template.id) {
     case 'full-form-fill':
-      return { ...fullFormPlan(prompt || template.task), templateId: template.id };
-    case 'login-negative':
-      return { ...loginNegativePlan(prompt || template.task), templateId: template.id };
-    case 'ecommerce-add-to-cart':
-      return { ...ecommercePlan(prompt || template.task), templateId: template.id };
+      return { ...formInteractionPlan(prompt || template.task), templateId: template.id };
+    case 'auth-negative':
+      return { ...authFlowPlan(prompt || template.task), templateId: template.id };
+    case 'transaction-cart':
+      return { ...transactionPlan(prompt || template.task), templateId: template.id };
     case 'responsive-mobile-smoke':
       return { ...responsivePlan(prompt || template.task), templateId: template.id };
     case 'accessibility-quick-check':
@@ -101,99 +95,102 @@ function planForTemplate(template: QaTemplate, prompt: string, targetUrl: string
   }
 }
 
-function fullFormPlan(task: string): QaTestPlan {
-  const assertions: QaAssertionSpec[] = [
-    textValue('ASSERT-001', 'First Name value equals John', 'John', ['input[name="02frstname"]', 'input[name*="fname"]', 'input[name*="first"]'], ['first name'], 'AC-001'),
-    textValue('ASSERT-002', 'Last Name value equals Doe', 'Doe', ['input[name*="lname"]', 'input[name*="last"]'], ['last name'], 'AC-001'),
-    textValue('ASSERT-003', 'Email value equals planned email value', 'testuser@example.com', ['input[type="email"]', 'input[name*="email"]'], ['email'], 'AC-001'),
-    selectedEquals('ASSERT-004', 'Card Type selected label equals Visa', 'Visa', ['select[name="40cc__type"]', 'select[name*="cc"][name*="type"]'], ['card type'], 'AC-003'),
-    selectedNotDefault('ASSERT-005', 'Expiry Month selected value is not default', ['select[name="42ccexp_mm"]', 'select[name*="exp"][name*="mm"]'], ['expiry month', 'exp month'], 'AC-003'),
-    selectedNotDefault('ASSERT-006', 'Expiry Year selected value is not expired/default', ['select[name="43ccexp_yy"]', 'select[name*="exp"][name*="yy"]'], ['expiry year', 'exp year'], 'AC-003'),
-    selectedNotDefault('ASSERT-007', 'Birth Month selected value is not default', ['select[name*="birth"][name*="month"]', 'select[name*="bmonth"]'], ['birth month'], 'AC-004'),
-    selectedNotDefault('ASSERT-008', 'Birth Day selected value is not default', ['select[name*="birth"][name*="day"]', 'select[name*="bday"]'], ['birth day'], 'AC-004'),
-    selectedNotDefault('ASSERT-009', 'Birth Year selected value is not default', ['select[name*="birth"][name*="year"]', 'select[name*="byear"]'], ['birth year'], 'AC-004')
-  ];
+function formInteractionPlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested form interaction is verified from final editable-control state', task, 'AC-001')];
   return {
     testId: 'TC-FORM-001',
-    title: 'Verify all required form fields are fillable',
+    title: 'Verify requested form interaction',
     task,
+    taskIntent: 'FORM_INTERACTION',
     acceptanceCriteria: [
-      criterion('AC-001', 'Text fields accept dummy data', assertions),
-      { id: 'AC-002', description: 'Password field accepts dummy data', assertionIds: [] },
-      criterion('AC-003', 'Select dropdowns accept valid options', assertions),
-      criterion('AC-004', 'Birth date dropdowns accept valid options', assertions),
-      { id: 'AC-005', description: 'No console errors during interaction', assertionIds: [] }
+      criterion('AC-001', 'Editable controls required by the task are discovered, changed, and verified', assertions),
+      { id: 'AC-002', description: 'No console errors during interaction', assertionIds: [] }
     ],
     assertions,
-    edgeCases: ['Unsupported select action must block the run.', 'Do not mark pass unless selected values are verified.']
+    edgeCases: ['If no editable controls exist for a form-only task, block with NO_FIELDS_FOUND.', 'Do not mark pass unless field values are verified.']
   };
 }
 
-function loginNegativePlan(task: string): QaTestPlan {
-  const assertions: QaAssertionSpec[] = [
-    {
-      id: 'ASSERT-001',
-      description: 'Invalid login does not reach inventory page',
-      kind: 'url_not_includes',
-      expected: 'inventory',
-      required: true,
-      acceptanceCriteriaId: 'AC-001'
-    },
-    {
-      id: 'ASSERT-002',
-      description: 'Relevant invalid credentials error is visible',
-      kind: 'text_includes',
-      expected: 'username and password do not match',
-      required: true,
-      textHints: ['invalid', 'do not match', 'epic sadface', 'credentials'],
-      acceptanceCriteriaId: 'AC-002'
-    }
-  ];
+function authFlowPlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested authentication outcome is verified', task, 'AC-001')];
   return {
-    testId: 'TC-LOGIN-NEGATIVE-001',
-    title: 'Verify invalid login is rejected with a visible error',
+    testId: 'TC-AUTH-001',
+    title: 'Verify requested authentication flow',
     task,
+    taskIntent: 'AUTH_FLOW',
     acceptanceCriteria: [
-      criterion('AC-001', 'Login does not succeed with invalid credentials', assertions),
-      criterion('AC-002', 'A relevant error message is visible', assertions),
-      { id: 'AC-003', description: 'Sensitive password is redacted from reports', assertionIds: [] }
+      criterion('AC-001', 'Final auth state or expected auth message is visible', assertions),
+      { id: 'AC-002', description: 'Sensitive values are redacted from reports', assertionIds: [] }
     ],
     assertions,
-    edgeCases: ['Bot protection or site outage blocks the test.', 'Invalid password must not appear in report artifacts.']
+    edgeCases: ['Missing credentials or blocked auth widgets are blocked outcomes, not product bugs by default.']
   };
 }
 
-function ecommercePlan(task: string): QaTestPlan {
-  const assertions: QaAssertionSpec[] = [
-    {
-      id: 'ASSERT-001',
-      description: 'Search results count is greater than 0',
-      kind: 'count_greater_than',
-      expected: 0,
-      required: true,
-      textHints: ['iphone'],
-      acceptanceCriteriaId: 'AC-001'
-    },
-    {
-      id: 'ASSERT-002',
-      description: 'Final cart state contains selected product name',
-      kind: 'text_includes',
-      expected: 'iphone',
-      required: true,
-      textHints: ['iphone', 'cart'],
-      acceptanceCriteriaId: 'AC-002'
-    }
-  ];
+function searchDiscoveryPlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested search or discovery result is verified', task, 'AC-001')];
   return {
-    testId: 'TC-ECOM-CART-001',
-    title: 'Verify product can be added to cart',
+    testId: 'TC-SEARCH-001',
+    title: 'Verify requested search or discovery flow',
     task,
+    taskIntent: 'SEARCH_OR_DISCOVERY',
     acceptanceCriteria: [
-      criterion('AC-001', 'Search results appear', assertions),
-      criterion('AC-002', 'Cart contains the selected product', assertions)
+      criterion('AC-001', 'Results or requested discovered content are visible', assertions)
     ],
     assertions,
-    edgeCases: ['Site layout changes should be reported as blocked, not website bugs.']
+    edgeCases: ['If search controls are absent, use navigation links before reporting a blocked run.']
+  };
+}
+
+function navigationPlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested navigation target is verified', task, 'AC-001')];
+  return {
+    testId: 'TC-NAVIGATION-001',
+    title: 'Verify requested navigation',
+    task,
+    taskIntent: 'NAVIGATION',
+    acceptanceCriteria: [criterion('AC-001', 'URL, title, heading, selected state, or page text proves the target was reached', assertions)],
+    assertions,
+    edgeCases: ['If the link/menu is missing, report REQUIRED_AFFORDANCE_NOT_FOUND rather than a website bug.']
+  };
+}
+
+function transactionPlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested cart or transaction state is verified', task, 'AC-001')];
+  return {
+    testId: 'TC-TRANSACTION-001',
+    title: 'Verify requested cart or transaction flow',
+    task,
+    taskIntent: 'TRANSACTION_OR_CART',
+    acceptanceCriteria: [criterion('AC-001', 'Final page state reflects the requested item or transaction result', assertions)],
+    assertions,
+    edgeCases: ['Choose options from observed DOM only; missing required options are blocked outcomes unless product behavior is proven wrong.']
+  };
+}
+
+function settingsPlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested setting change is verified', task, 'AC-001')];
+  return {
+    testId: 'TC-SETTINGS-001',
+    title: 'Verify requested setting change',
+    task,
+    taskIntent: 'SETTINGS_CHANGE',
+    acceptanceCriteria: [criterion('AC-001', 'Final DOM/page state shows the requested setting value', assertions)],
+    assertions,
+    edgeCases: ['Disabled or missing settings controls are blocked outcomes.']
+  };
+}
+
+function contentPlan(task: string): QaTestPlan {
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'Requested content is visible', task, 'AC-001')];
+  return {
+    testId: 'TC-CONTENT-001',
+    title: 'Verify requested content',
+    task,
+    taskIntent: 'CONTENT_VERIFICATION',
+    acceptanceCriteria: [criterion('AC-001', 'Requested text, image, component, or heading is visible in the final state', assertions)],
+    assertions,
+    edgeCases: ['Visual-only issues require screenshot evidence.']
   };
 }
 
@@ -220,6 +217,7 @@ function responsivePlan(task: string): QaTestPlan {
     testId: 'TC-RESPONSIVE-001',
     title: 'Verify desktop and mobile homepage usability',
     task,
+    taskIntent: 'CONTENT_VERIFICATION',
     acceptanceCriteria: [
       criterion('AC-001', 'No horizontal overflow', assertions),
       criterion('AC-002', 'Primary content and CTA are usable', assertions)
@@ -244,6 +242,7 @@ function accessibilityPlan(task: string): QaTestPlan {
     testId: 'TC-A11Y-001',
     title: 'Verify basic accessibility requirements',
     task,
+    taskIntent: 'CONTENT_VERIFICATION',
     acceptanceCriteria: [
       criterion('AC-001', 'Page has title, heading, labels, alt text, and reachable controls', assertions)
     ],
@@ -253,23 +252,26 @@ function accessibilityPlan(task: string): QaTestPlan {
 }
 
 function genericPlan(task: string): QaTestPlan {
-  const assertions: QaAssertionSpec[] = [
-    {
-      id: 'ASSERT-001',
-      description: 'User objective is verified by final DOM/page evidence',
-      kind: 'objective_verified',
-      expected: true,
-      required: true,
-      acceptanceCriteriaId: 'AC-001'
-    }
-  ];
+  const assertions: QaAssertionSpec[] = [objectiveAssertion('ASSERT-001', 'User objective is verified by final DOM/page evidence', task, 'AC-001')];
   return {
     testId: 'TC-GENERIC-001',
     title: task.slice(0, 96) || 'Verify requested QA objective',
     task,
+    taskIntent: 'GENERAL_TASK',
     acceptanceCriteria: [criterion('AC-001', 'Requested QA objective is completed and verified', assertions)],
     assertions,
     edgeCases: ['If the objective cannot be verified, final status is blocked.']
+  };
+}
+
+function objectiveAssertion(id: string, description: string, expected: string, acceptanceCriteriaId: string): QaAssertionSpec {
+  return {
+    id,
+    description,
+    kind: 'objective_verified',
+    expected,
+    required: true,
+    acceptanceCriteriaId
   };
 }
 
@@ -278,65 +280,5 @@ function criterion(id: string, description: string, assertions: QaAssertionSpec[
     id,
     description,
     assertionIds: assertions.filter((assertion) => assertion.acceptanceCriteriaId === id).map((assertion) => assertion.id)
-  };
-}
-
-function textValue(
-  id: string,
-  description: string,
-  expected: string,
-  selectorHints: string[],
-  textHints: string[],
-  acceptanceCriteriaId: string
-): QaAssertionSpec {
-  return {
-    id,
-    description,
-    kind: 'equals',
-    expected,
-    selectorHints,
-    textHints,
-    required: true,
-    acceptanceCriteriaId
-  };
-}
-
-function selectedEquals(
-  id: string,
-  description: string,
-  expected: string,
-  selectorHints: string[],
-  textHints: string[],
-  acceptanceCriteriaId: string
-): QaAssertionSpec {
-  return {
-    id,
-    description,
-    kind: 'equals',
-    expected,
-    selectorHints,
-    textHints,
-    required: true,
-    acceptanceCriteriaId
-  };
-}
-
-function selectedNotDefault(
-  id: string,
-  description: string,
-  selectorHints: string[],
-  textHints: string[],
-  acceptanceCriteriaId: string
-): QaAssertionSpec {
-  return {
-    id,
-    description,
-    kind: 'not_default',
-    expected: 'non-default selection',
-    selectorHints,
-    textHints,
-    defaultValues: ['', 'select', 'please select', 'month', 'day', 'year', 'mm', 'yy'],
-    required: true,
-    acceptanceCriteriaId
   };
 }

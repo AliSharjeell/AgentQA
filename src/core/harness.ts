@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import type { FieldRegistry, FieldRegistryEntry, QaNetworkErrorDetail } from '../shared/types';
+import type { ElementRegistry, ElementRegistryEntry, FieldRegistry, FieldRegistryEntry, QaNetworkErrorDetail } from '../shared/types';
 
 export function safeJsonForInjectedJs(value: unknown): string {
   return JSON.stringify(value)
@@ -86,32 +86,7 @@ export interface QaFault {
   step: string;
 }
 
-export interface ObservedElement {
-  id: string;
-  type: string;
-  description: string;
-  value?: string | null;
-  text?: string;
-  options?: Array<{
-    value: string;
-    label: string;
-    selected?: boolean;
-    disabled?: boolean;
-  }>;
-  tag: string;
-  selector: string;
-  href?: string;
-  role?: string;
-  name?: string;
-  classes?: string;
-  x: number;
-  y: number;
-  visible: boolean;
-  disabled?: boolean;
-  checked?: boolean;
-  selected?: boolean;
-  expanded?: boolean;
-}
+export interface ObservedElement extends ElementRegistryEntry {}
 
 export interface PageObservation {
   taskUrl: string;
@@ -125,6 +100,7 @@ export interface PageObservation {
     pw?: number;
     ph?: number;
   };
+  elementRegistry?: ElementRegistry;
   availableElements: ObservedElement[];
   interactiveElements: ObservedElement[];
   fieldRegistry?: FieldRegistry;
@@ -821,7 +797,7 @@ function buildDomSnapshotPython(): string {
           String(el.className || '').replace(/\\s+/g, ' ').trim() ||
           el.tagName.toLowerCase()
         ).trim();
-        if (stableName && base && !base.toLowerCase().includes(String(stableName).toLowerCase()) && /^(add to cart|remove|checkout|continue|login|submit)$/i.test(base)) {
+        if (stableName && base && !base.toLowerCase().includes(String(stableName).toLowerCase()) && base.length <= 24) {
           return (base + ' (' + stableName + ')').trim();
         }
         return base;
@@ -830,11 +806,18 @@ function buildDomSnapshotPython(): string {
         const tag = el.tagName.toLowerCase();
         const role = el.getAttribute('role') || '';
         const inputType = (el.getAttribute('type') || '').toLowerCase();
-        if (role === 'searchbox' || role === 'textbox' || role === 'combobox' || role === 'listbox' || role === 'option' || role.startsWith('menuitem')) return role;
+        if (['searchbox', 'textbox', 'combobox', 'listbox', 'option', 'menu', 'tab', 'dialog', 'link', 'button', 'checkbox', 'radio'].includes(role) || role.startsWith('menuitem')) return role;
         if (tag === 'input' || tag === 'textarea') return inputType || 'input';
         if (tag === 'select') return 'select';
         if (tag === 'button' || role === 'button') return 'button';
         if (tag === 'a' || role === 'link') return 'link';
+        if (tag === 'summary') return 'accordion';
+        if (tag === 'dialog') return 'dialog';
+        try {
+          const style = window.getComputedStyle(el);
+          if (style.cursor === 'pointer' && ['article', 'li', 'div', 'section'].includes(tag)) return 'card';
+          if (style.cursor === 'pointer') return 'button';
+        } catch (_) {}
         if (role) return role;
         return tag;
       };
@@ -903,7 +886,23 @@ function buildDomSnapshotPython(): string {
         return undefined;
       };
 
-      const nodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,[contenteditable],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="combobox"],[role="listbox"],[role="option"],[role="menu"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="textbox"],[role="searchbox"],[aria-haspopup],[aria-expanded],[tabindex],label'));
+      const explicitNodes = Array.from(document.querySelectorAll('a,button,input,select,textarea,summary,details,dialog,[contenteditable],[role],[aria-modal="true"],[aria-haspopup],[aria-expanded],[tabindex],label,[onclick],[data-action],[data-href],[data-link],[data-testid],[data-test],[data-qa]'));
+      const broadNodes = Array.from(document.querySelectorAll('body *')).slice(0, 2500).filter(el => {
+        const tag = el.tagName.toLowerCase();
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        if (['script', 'style', 'meta', 'link', 'br', 'path'].includes(tag)) return false;
+        if (typeof el.onclick === 'function' || el.hasAttribute('onclick')) return true;
+        if (role && !['presentation', 'none'].includes(role)) return true;
+        if (el.hasAttribute('aria-haspopup') || el.hasAttribute('aria-expanded') || el.hasAttribute('aria-controls') || el.hasAttribute('aria-modal')) return true;
+        if (el.hasAttribute('data-action') || el.hasAttribute('data-href') || el.hasAttribute('data-link')) return true;
+        try {
+          const style = window.getComputedStyle(el);
+          return style.cursor === 'pointer';
+        } catch (_) {
+          return false;
+        }
+      });
+      const nodes = Array.from(new Set([...explicitNodes, ...broadNodes]));
       const elements = [];
       const registry = [];
       let idx = 0;
@@ -996,6 +995,7 @@ function buildDomSnapshotPython(): string {
         if (elements.length >= 140) break;
       }
       return {
+        elementRegistry: elements,
         availableElements: elements,
         fieldRegistry: registry,
         pageText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 4500),
@@ -1015,6 +1015,7 @@ function buildDomSnapshotPython(): string {
         info["title"] = js("document.title")
     snapshot = js("""${observationJs}""")
     elements = snapshot.get("availableElements", []) if isinstance(snapshot, dict) else []
+    element_registry = snapshot.get("elementRegistry", elements) if isinstance(snapshot, dict) else []
     field_registry = snapshot.get("fieldRegistry", []) if isinstance(snapshot, dict) else []
     page_text = snapshot.get("pageText", "") if isinstance(snapshot, dict) else ""
     console_errors = snapshot.get("consoleErrors", []) if isinstance(snapshot, dict) else []
@@ -1067,6 +1068,7 @@ function buildDomSnapshotPython(): string {
     observation = {
         "taskUrl": target_url,
         "page": info,
+        "elementRegistry": element_registry,
         "availableElements": elements,
         "interactiveElements": elements,
         "fieldRegistry": field_registry,
