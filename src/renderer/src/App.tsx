@@ -199,28 +199,6 @@ export default function App(): JSX.Element {
                 <Search size={13} />
               </button>
             </div>
-
-            <div className="window-no-drag flex items-center gap-1 shrink-0">
-              <button
-                className="h-7 px-2.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition-colors active:scale-95"
-                onClick={async () => {
-                  if (!window.qaApi) return;
-                  const btn = document.activeElement as HTMLButtonElement;
-                  const oldText = btn.innerText;
-                  btn.innerText = "Solving...";
-                  btn.disabled = true;
-                  const res = await window.qaApi.solveCaptchaManually();
-                  btn.disabled = false;
-                  btn.innerText = oldText;
-                  if (!res.ok) {
-                    alert("Error: " + (res.error || res.message || "Unknown error"));
-                  }
-                }}
-                title="Auto-solve visible Captcha via Vision"
-              >
-                Solve Captcha
-              </button>
-            </div>
           </div>
 
           {/* Browser preview area */}
@@ -1070,7 +1048,7 @@ function SettingsPanel(): JSX.Element {
           <input className="input w-full" type="password" placeholder="gsk_..." value={settings.groqApiKey || ""} onChange={(e) => setSettings((s) => ({ ...s, groqApiKey: e.target.value }))} />
         </div>
         <div className="flex gap-2">
-          <button className="secondary-button w-full" onClick={async () => {
+          <button className="secondary-button w-1/2 flex items-center justify-center gap-2" onClick={async () => {
             if (!settings.groqApiKey) return;
             setTesting(true);
             setTestResult(null);
@@ -1084,7 +1062,27 @@ function SettingsPanel(): JSX.Element {
             }
           }} disabled={testing || !settings.groqApiKey}>
             {testing ? <Loader2 size={12} className="animate-spin" /> : null}
-            Test Captcha (Groq API)
+            Test Captcha
+          </button>
+          
+          <button
+            className="secondary-button w-1/2 flex items-center justify-center gap-2 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10"
+            onClick={async () => {
+              if (!window.qaApi) return;
+              const btn = document.activeElement as HTMLButtonElement;
+              const oldText = btn.innerText;
+              btn.innerText = "Solving...";
+              btn.disabled = true;
+              const res = await window.qaApi.solveCaptchaManually();
+              btn.disabled = false;
+              btn.innerText = oldText;
+              if (!res.ok) {
+                alert("Error: " + (res.error || res.message || "Unknown error"));
+              }
+            }}
+            title="Auto-solve visible Captcha via Vision"
+          >
+            Solve Captcha
           </button>
         </div>
       </div>

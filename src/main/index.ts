@@ -558,12 +558,8 @@ function registerIpc(): void {
 
   ipcMain.handle("browser:solveCaptchaManually", async () => {
     try {
-      const settingsPath = path.join(app.getPath("userData"), "agentqa-settings.json");
-      let apiKey = "";
-      if (fs.existsSync(settingsPath)) {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-        apiKey = settings.groqApiKey;
-      }
+      const settings = loadSettings();
+      const apiKey = settings.groqApiKey;
       if (!apiKey) return { ok: false, error: "No Groq API Key found in settings." };
 
       if (!browserView) return { ok: false, error: "No browser view active." };
