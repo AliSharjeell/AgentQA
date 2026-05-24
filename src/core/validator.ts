@@ -72,7 +72,7 @@ OUTPUT SCHEMA (Strict JSON)
     return {
       verdict: 'UNTRUSTWORTHY_REPORT',
       confidence: 'LOW',
-      summary: \`Validator LLM failed to process the audit: \${err.message}\`,
+      summary: `Validator LLM failed to process the audit: ${err.message}`,
       critical_findings: [],
       final_recommendation: 'Skip validator feedback and rely on manual review.'
     };
