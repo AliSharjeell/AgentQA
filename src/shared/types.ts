@@ -76,7 +76,7 @@ export type AgentActionName =
 
 export type AgentActionStatus = "success" | "failed" | "skipped" | "needs_user" | "blocked";
 
-export type QaVerdict = "PASS" | "PASS_WITH_WARNINGS" | "FAIL" | "BLOCKED" | "WARNING" | "SKIPPED";
+export type QaVerdict = "PASS" | "PASS_WITH_WARNINGS" | "FAIL" | "BLOCKED" | "WARNING" | "SKIPPED" | "INFRA_FAILED" | "AGENT_FAILED";
 
 export type QaRootCause =
   | "WEBSITE_BUG"
@@ -87,7 +87,9 @@ export type QaRootCause =
   | "ENVIRONMENT_ISSUE"
   | "AMBIGUOUS"
   | "REPORT_INCONSISTENCY"
-  | "VERIFIER_RUNTIME_ERROR";
+  | "VERIFIER_RUNTIME_ERROR"
+  | "BROWSER_EVALUATION_ERROR"
+  | "FIELD_REGISTRY_EMPTY";
 
 export type QaSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
@@ -106,6 +108,7 @@ export type AgentActionErrorCode =
 
 export interface FieldRegistryEntry {
   field_id: string;
+  pageUrl?: string;
   temporary_observation_id: string;
   label: string;
   selector: string;

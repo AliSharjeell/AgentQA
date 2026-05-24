@@ -396,7 +396,11 @@ function buildAcceptanceCriteria(plan: QaTestPlan, assertions: QaAssertionResult
     } else if (criterion.description.toLowerCase().includes('console')) {
       status = stats.console_errors > 0 ? 'WARNING' : 'PASS';
     } else {
-      status = 'PASS';
+      if (stats.actions_total === 0) {
+        status = criterion.description.toLowerCase().includes('page load') ? 'PASS' : 'BLOCKED';
+      } else {
+        status = 'PASS';
+      }
     }
     return {
       id: criterion.id,
@@ -430,7 +434,9 @@ function decideVerdict(
   const blockedAction = actions.find((action) => action.action_result === 'BLOCKED' || action.verification?.status === 'BLOCKED');
   if (blockedAction) return { status: 'BLOCKED', rootCause: blockedAction.verification?.rootCause || 'AGENT_LIMITATION', severity: 'HIGH' };
 
-  if (llmReport?.result === 'INFRA_FAILED') return { status: 'BLOCKED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
+  if (llmReport?.result === 'INFRA_FAILED') {
+    return { status: 'INFRA_FAILED', rootCause: 'ENVIRONMENT_ISSUE', severity: 'HIGH' };
+  }
 
   const hasWarnings = assertions.some((assertion) => assertion.status === 'WARNING') || evidenceWarnings.length || stats.console_errors > 0 || stats.network_errors > 0;
   const criticalNetworkErrors = stats.critical_network_errors ?? 0;

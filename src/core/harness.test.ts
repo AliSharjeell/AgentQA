@@ -11,7 +11,7 @@ describe('buildVerificationScript', () => {
       }
     ];
 
-    const script = buildVerificationScript(sampleRegistry);
+    const script = buildVerificationScript(sampleRegistry as any);
 
     // Should contain the serialized json
     expect(script).toContain(JSON.stringify(JSON.stringify(sampleRegistry)));

@@ -525,6 +525,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   let plan: AgentPlanStep[] = [];
   let faults: QaFault[] = [];
   const history: AgentHistoryEntry[] = [];
+  const globalFieldRegistry: import('../shared/types').FieldRegistry = [];
   let lastActionResult: string | null = null;
   let lastSignature: string | null = null;
   let repeatCount = 0;
@@ -540,6 +541,16 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
   const rememberObservation = (nextObservation: PageObservation): void => {
     observations.push(nextObservation);
+    if (nextObservation.fieldRegistry) {
+      for (const entry of nextObservation.fieldRegistry) {
+        const existing = globalFieldRegistry.find(e => e.field_id === entry.field_id && e.pageUrl === entry.pageUrl);
+        if (existing) {
+          Object.assign(existing, entry);
+        } else {
+          globalFieldRegistry.push({ ...entry });
+        }
+      }
+    }
   };
 
   const finishWithReport = async (legacyReport: CliReport, summary: string, url: string): Promise<TaskResult> => {
@@ -555,10 +566,10 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     consoleLogPath = evidenceCollector.saveConsoleLog(observations);
     networkLogPath = evidenceCollector.saveNetworkLog(observations);
     let verifierRuntimeError: Error | null = null;
-    if (executor && finalObservation.fieldRegistry) {
+    if (executor && globalFieldRegistry.length > 0) {
       try {
-        const fieldResults = await executor.verifyFields(finalObservation.fieldRegistry);
-        for (const entry of finalObservation.fieldRegistry) {
+        const fieldResults = await executor.verifyFields(globalFieldRegistry);
+        for (const entry of globalFieldRegistry) {
           const fr = fieldResults[entry.field_id];
           if (fr && fr.found) {
             entry.value = fr.value;
@@ -574,7 +585,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     const assertions = verifyPlanAssertions({
       plan: testPlan,
-      observation: finalObservation,
+      observation: { ...finalObservation, fieldRegistry: globalFieldRegistry },
       llmReport: legacyReport,
       evidence: [...evidence, ...(legacyReport.evidence || [])],
       actions: qaActions
@@ -623,17 +634,29 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     }
 
     if (!verifierRuntimeError) {
-      try {
-        addStep('Running Validator LLM audit', 'running');
-        onStep({ instruction: 'Running Validator LLM audit', status: 'running' });
-      const validatorReview = await runValidatorAudit({ settings, result: finalReport, observations });
-      applyValidatorGating(finalReport, validatorReview);
-      addStep('Running Validator LLM audit', 'done', 'Validator review completed');
-      onStep({ instruction: 'Running Validator LLM audit', status: 'done', result: 'Validator review completed' });
-      } catch (err: any) {
-        addStep('Running Validator LLM audit', 'failed', undefined, err.message);
-        onStep({ instruction: 'Running Validator LLM audit', status: 'failed', error: err.message });
-        console.error("Validator LLM failed", err);
+      if (finalReport.status === 'INFRA_FAILED') {
+        finalReport.validator_review = {
+          verdict: 'VALID_REPORT',
+          confidence: 'HIGH',
+          summary: 'Skipped Validator LLM audit because the execution failed with an infrastructure error.',
+          critical_findings: [],
+          final_recommendation: 'NEED_HUMAN_REVIEW',
+          can_show_to_user: true,
+          suggested_report_patches: []
+        };
+      } else {
+        try {
+          addStep('Running Validator LLM audit', 'running');
+          onStep({ instruction: 'Running Validator LLM audit', status: 'running' });
+          const validatorReview = await runValidatorAudit({ settings, result: finalReport, observations });
+          applyValidatorGating(finalReport, validatorReview);
+          addStep('Running Validator LLM audit', 'done', 'Validator review completed');
+          onStep({ instruction: 'Running Validator LLM audit', status: 'done', result: 'Validator review completed' });
+        } catch (err: any) {
+          addStep('Running Validator LLM audit', 'failed', undefined, err.message);
+          onStep({ instruction: 'Running Validator LLM audit', status: 'failed', error: err.message });
+          console.error("Validator LLM failed", err);
+        }
       }
     }
 
@@ -733,16 +756,21 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   const initial = await executor.openUrl(targetUrl);
 
   if (!initial.ok) {
+    let rootCause: import('../shared/types').QaRootCause = 'ENVIRONMENT_ISSUE';
+    if (initial.message?.toLowerCase().includes('javascript') || initial.message?.toLowerCase().includes('syntaxerror')) {
+      rootCause = 'BROWSER_EVALUATION_ERROR';
+    }
+
     const report = makeReport({
       result: 'INFRA_FAILED',
       scenario: prompt,
-      summary: initial.message,
+      summary: 'Initial browser observation failed. No QA actions were executed. ' + initial.message,
       finalUrl: targetUrl,
       history,
       faults: [{
         severity: 'critical',
         type: 'infra',
-        title: 'Initial browser observation failed',
+        title: 'Initial observation script failed',
         details: initial.message,
         evidence: [initial.message],
         url: targetUrl,
@@ -750,10 +778,36 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       }],
       evidence: [initial.message]
     });
-    return finishWithReport(report, 'Initial browser observation failed.', targetUrl);
+    // Set explicit root cause
+    if (report.faultLog && report.faultLog.length > 0) {
+      report.faultLog[0].type = 'infra'; 
+    }
+    return finishWithReport({ ...report, result: 'INFRA_FAILED' }, 'Initial browser observation failed.', targetUrl);
   }
 
   observation = initial.observation;
+  
+  if (!observation.fieldRegistry || observation.fieldRegistry.length === 0) {
+    const report = makeReport({
+      result: 'INFRA_FAILED',
+      scenario: prompt,
+      summary: 'Page loaded but no editable fields were discovered (FieldRegistry is empty).',
+      finalUrl: targetUrl,
+      history,
+      faults: [{
+        severity: 'critical',
+        type: 'infra',
+        title: 'FieldRegistry empty',
+        details: 'Initial browser observation found 0 fields.',
+        evidence: [],
+        url: targetUrl,
+        step: 'initial observation'
+      }],
+      evidence: []
+    });
+    return finishWithReport({ ...report, result: 'INFRA_FAILED' }, 'No fields discovered.', targetUrl);
+  }
+
   rememberObservation(observation);
   currentUrl = observation.page.url || targetUrl;
   faults = addConsoleFaults(faults, observation, 'initial observation');

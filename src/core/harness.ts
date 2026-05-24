@@ -5,6 +5,28 @@ import path from 'node:path';
 import net from 'node:net';
 import type { FieldRegistry, FieldRegistryEntry } from '../shared/types';
 
+export function assertValidInjectedJs(script: string, name: string) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(script);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const numberedLines = script.split("\\n").map((line, i) => String(i + 1) + ": " + line).join("\\n");
+    const fullError = "Injected JS syntax error in " + name + ": " + errorMsg + "\\n" + numberedLines;
+    
+    try {
+      const debugDir = path.join(process.cwd(), 'debug', 'injected-js');
+      fs.mkdirSync(debugDir, { recursive: true });
+      fs.writeFileSync(path.join(debugDir, name + ".js"), script);
+      fs.writeFileSync(path.join(debugDir, name + "-error.txt"), fullError);
+    } catch (fsErr) {
+      // Ignore file writing errors so we still throw the original
+    }
+    
+    throw new Error(fullError);
+  }
+}
+
 const execAsync = promisify(exec);
 
 export interface HarnessStepEvent {
@@ -203,7 +225,7 @@ function getFreePort(): Promise<number> {
 
 async function isCdpReachable(cdpUrl: string): Promise<boolean> {
   try {
-    const response = await fetch(`${cdpUrl.replace(/\/$/, '')}/json/version`, { signal: AbortSignal.timeout(1500) });
+    const response = await fetch(cdpUrl.replace(new RegExp('/$'), '') + '/json/version', { signal: AbortSignal.timeout(1500) });
     return response.ok;
   } catch {
     return false;
@@ -212,13 +234,13 @@ async function isCdpReachable(cdpUrl: string): Promise<boolean> {
 
 async function startManagedBrowser(): Promise<ManagedBrowser> {
   const port = await getFreePort();
-  const cdpUrl = `http://127.0.0.1:${port}`;
-  const userDataDir = path.join(getAgentQaDataDir(), `chrome-cli-profile-${process.pid}-${Date.now()}`);
+  const cdpUrl = 'http://127.0.0.1:' + port;
+  const userDataDir = path.join(getAgentQaDataDir(), 'chrome-cli-profile-' + process.pid + '-' + Date.now());
   fs.mkdirSync(userDataDir, { recursive: true });
 
   const chrome = findChromeExecutable();
   const child = spawn(chrome, [
-    `--remote-debugging-port=${port}`,
+    '--remote-debugging-port=' + port,
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${userDataDir}`,
     '--headless=new',
@@ -642,42 +664,64 @@ export function runHarnessScript(
 }
 
 function buildDomSnapshotPython(): string {
-  return `
-    info = page_info()
-    if not info:
-        info = {}
-    if not info.get("url"):
-        info["url"] = js("window.location.href")
-    if not info.get("title"):
-        info["title"] = js("document.title")
-    snapshot = js("""(() => {
-      if (!window.__agentqaConsoleErrors) {
-        window.__agentqaConsoleErrors = [];
-        const originalConsoleError = console.error.bind(console);
-        console.error = (...args) => {
-          try {
-            window.__agentqaConsoleErrors.push(args.map((arg) => {
-              if (arg instanceof Error) return arg.stack || arg.message;
-              if (typeof arg === 'object') return JSON.stringify(arg);
-              return String(arg);
-            }).join(' '));
-          } catch (_) {}
-          originalConsoleError(...args);
-        };
-        window.addEventListener('error', event => {
-          window.__agentqaConsoleErrors.push(String(event.message || event.error || 'error'));
-        });
-        window.addEventListener('unhandledrejection', event => {
-          window.__agentqaConsoleErrors.push(String(event.reason || 'unhandled rejection'));
-        });
-      }
+  const observationJs = `
+(() => {
+  try {
+    if (!window.__agentqaConsoleInstalled) {
+      window.__agentqaConsoleInstalled = true;
+      window.__agentqaConsoleErrors = [];
 
-      const cssEscape = (value) => {
-        if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
-        return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\\\$&');
+      const originalConsoleError = console.error;
+      console.error = function(...args) {
+        try {
+          window.__agentqaConsoleErrors.push({
+            type: "console.error",
+            args: args.map((arg) => {
+              try {
+                if (typeof arg === "string") return arg;
+                return JSON.stringify(arg);
+              } catch (e) {
+                return String(arg);
+              }
+            }),
+            timestamp: new Date().toISOString()
+          });
+        } catch (e) {}
+
+        return originalConsoleError.apply(console, args);
       };
-      const selectorFor = (el) => {
-        if (el.id) return '#' + cssEscape(el.id);
+
+      window.addEventListener("error", function(event) {
+        try {
+          window.__agentqaConsoleErrors.push({
+            type: "window.error",
+            message: event.message || "",
+            filename: event.filename || "",
+            lineno: event.lineno || 0,
+            colno: event.colno || 0,
+            timestamp: new Date().toISOString()
+          });
+        } catch (e) {}
+      });
+
+      window.addEventListener("unhandledrejection", function(event) {
+        try {
+          window.__agentqaConsoleErrors.push({
+            type: "unhandledrejection",
+            message: event.reason ? String(event.reason) : "",
+            timestamp: new Date().toISOString()
+          });
+        } catch (e) {}
+      });
+    }
+  } catch (e) {}
+
+  const cssEscape = (value) => {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\\\$&');
+  };
+  const selectorFor = (el) => {
+    if (el.id) return '#' + cssEscape(el.id);
         const testId = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-qa');
         if (testId) return '[' + (el.getAttribute('data-testid') ? 'data-testid' : el.getAttribute('data-test') ? 'data-test' : 'data-qa') + '="' + testId.replace(/"/g, '\\\\"') + '"]';
         const name = el.getAttribute('name');
@@ -883,6 +927,7 @@ function buildDomSnapshotPython(): string {
             selector: sel,
             selector_candidates: Array.from(new Set(selector_candidates)),
             tag,
+            pageUrl: location.href,
             type: typeFor(el),
             name: el.getAttribute('name') || '',
             html_id: el.id || '',
@@ -905,7 +950,19 @@ function buildDomSnapshotPython(): string {
         pageText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 4500),
         consoleErrors: (window.__agentqaConsoleErrors || []).slice(-12)
       };
-    })()""")
+    })()`;
+
+  assertValidInjectedJs(observationJs, "initial-observation");
+
+  return `
+    info = page_info()
+    if not info:
+        info = {}
+    if not info.get("url"):
+        info["url"] = js("window.location.href")
+    if not info.get("title"):
+        info["title"] = js("document.title")
+    snapshot = js("""${observationJs}""")
     elements = snapshot.get("availableElements", []) if isinstance(snapshot, dict) else []
     field_registry = snapshot.get("fieldRegistry", []) if isinstance(snapshot, dict) else []
     page_text = snapshot.get("pageText", "") if isinstance(snapshot, dict) else ""
@@ -1403,6 +1460,49 @@ ${indentPython(buildDomSnapshotPython(), '    ')}
 }
 
 export function buildVerificationScript(registry: import('../shared/types').FieldRegistry): string {
+  const verifierJs = `
+(() => {
+  const results = {};
+  const registry = \${JSON.stringify(registry)};
+  for (const field of registry) {
+    let el = null;
+    for (const sel of field.selector_candidates || [field.selector]) {
+      try { el = document.querySelector(sel); } catch(e) {}
+      if (el) break;
+    }
+    
+    if (!el) {
+      results[field.field_id] = { found: false };
+      continue;
+    }
+
+    const tag = el.tagName.toLowerCase();
+    let val = 'value' in el ? el.value : (el.isContentEditable ? el.innerText : null);
+    let checked = el.checked || el.getAttribute('aria-checked') === 'true';
+    
+    let selected_value = null;
+    let selected_label = null;
+    if (tag === 'select') {
+       const selectedOpt = Array.from(el.options || []).find(o => o.selected);
+       if (selectedOpt) {
+         selected_value = selectedOpt.value;
+         selected_label = (selectedOpt.label || selectedOpt.textContent || '').trim();
+       }
+    }
+    
+    results[field.field_id] = {
+      found: true,
+      value: String(val || ''),
+      checked: Boolean(checked),
+      selected_value: selected_value !== null ? String(selected_value) : null,
+      selected_label: selected_label !== null ? String(selected_label) : null
+    };
+  }
+  return results;
+})()`;
+
+  assertValidInjectedJs(verifierJs, "field-verifier");
+
   return `
 import json
 import traceback
@@ -1412,45 +1512,8 @@ def emit(payload):
 
 try:
     results = {}
-    registry = json.loads(${JSON.stringify(JSON.stringify(registry))})
-
-    script = "(() => {\\n  const results = {};\\n  const registry = " + json.dumps(registry) + ";\\n" + """
-      for (const field of registry) {
-        let el = null;
-        for (const sel of field.selector_candidates || [field.selector]) {
-          try { el = document.querySelector(sel); } catch(e) {}
-          if (el) break;
-        }
-        
-        if (!el) {
-          results[field.field_id] = { found: false };
-          continue;
-        }
-
-        const tag = el.tagName.toLowerCase();
-        let val = 'value' in el ? el.value : (el.isContentEditable ? el.innerText : null);
-        let checked = el.checked || el.getAttribute('aria-checked') === 'true';
-        
-        let selected_value = null;
-        let selected_label = null;
-        if (tag === 'select') {
-           const selectedOpt = Array.from(el.options || []).find(o => o.selected);
-           if (selectedOpt) {
-             selected_value = selectedOpt.value;
-             selected_label = (selectedOpt.label || selectedOpt.textContent || '').trim();
-           }
-        }
-        
-        results[field.field_id] = {
-          found: true,
-          value: String(val || ''),
-          checked: Boolean(checked),
-          selected_value: selected_value !== null ? String(selected_value) : null,
-          selected_label: selected_label !== null ? String(selected_label) : null
-        };
-      }
-      return results;
-    })()"""
+    
+    script = """\${verifierJs}"""
 
     results = js(script)
     emit({"instruction": "Verify field values", "status": "done", "result": "Verified " + str(len(registry)) + " fields."})
