@@ -199,6 +199,28 @@ export default function App(): JSX.Element {
                 <Search size={13} />
               </button>
             </div>
+
+            <div className="window-no-drag flex items-center gap-1 shrink-0">
+              <button
+                className="h-7 px-2.5 rounded text-xs font-medium bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition-colors active:scale-95"
+                onClick={async () => {
+                  if (!window.qaApi) return;
+                  const btn = document.activeElement as HTMLButtonElement;
+                  const oldText = btn.innerText;
+                  btn.innerText = "Solving...";
+                  btn.disabled = true;
+                  const res = await window.qaApi.solveCaptchaManually();
+                  btn.disabled = false;
+                  btn.innerText = oldText;
+                  if (!res.ok) {
+                    alert("Error: " + (res.error || res.message || "Unknown error"));
+                  }
+                }}
+                title="Auto-solve visible Captcha via Vision"
+              >
+                Solve Captcha
+              </button>
+            </div>
           </div>
 
           {/* Browser preview area */}

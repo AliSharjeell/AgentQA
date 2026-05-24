@@ -731,6 +731,7 @@ export interface QaApi {
   saveSettings: (settings: AppSettings) => Promise<void>;
   testApiConnection: (url: string, method: string, headers: Record<string, string>, body: string) => Promise<{ ok: boolean; status: number; body: string }>;
   testGroqCaptcha: (base64Image: string | null, groqKey?: string) => Promise<{ ok: boolean; text: string }>;
+  solveCaptchaManually: () => Promise<{ ok: boolean; message?: string; error?: string }>;
 
   // ── Browser ──
   getBrowserState: () => Promise<BrowserState>;

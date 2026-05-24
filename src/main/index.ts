@@ -29,6 +29,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { runQaTask as runEngineQaTask } from "../core/engine";
 import { HarnessStepEvent } from "../core/harness";
+import { createAgentExecutor } from "../core/executor";
 import { renderMarkdownReport, toDesktopReport } from "../core/reporter";
 import { listQaTemplates } from "../core/templates";
 import { spawn } from "node:child_process";
@@ -552,6 +553,74 @@ function registerIpc(): void {
       return { ok: true, text: json.choices?.[0]?.message?.content || JSON.stringify(json) };
     } catch (err) {
       return { ok: false, text: String(err) };
+    }
+  });
+
+  ipcMain.handle("browser:solveCaptchaManually", async () => {
+    try {
+      const settingsPath = path.join(app.getPath("userData"), "agentqa-settings.json");
+      let apiKey = "";
+      if (fs.existsSync(settingsPath)) {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+        apiKey = settings.groqApiKey;
+      }
+      if (!apiKey) return { ok: false, error: "No Groq API Key found in settings." };
+
+      if (!browserView) return { ok: false, error: "No browser view active." };
+      const image = await browserView.webContents.capturePage();
+      const base64Image = `data:image/jpeg;base64,${image.toJPEG(80).toString("base64")}`;
+
+      const messages: any[] = [{
+        role: "user",
+        content: [
+          { type: "text", text: "You are a captcha solving agent for a browser automation tool. Analyze this image. If you see a captcha, return a strict JSON array of actions to take. Possible actions: {\"action\":\"click\",\"coordinates\":[x,y]}, {\"action\":\"type\",\"text\":\"xyz\"}. Return ONLY JSON, no markdown." },
+          { type: "image_url", image_url: { url: base64Image } }
+        ]
+      }];
+
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages,
+          temperature: 1,
+          max_completion_tokens: 1024,
+          top_p: 1
+        })
+      });
+      
+      const json = await res.json();
+      if (!res.ok) return { ok: false, error: `Groq Error ${res.status}: ${JSON.stringify(json)}` };
+      
+      const textResponse = json.choices?.[0]?.message?.content || "";
+      let batchJson;
+      try { batchJson = JSON.parse(textResponse); } catch(e) {}
+      
+      if (batchJson && batchJson.action === 'batch' && batchJson.actions?.length > 0) {
+        const url = browserView.webContents.getURL();
+        const cdpUrl = `http://127.0.0.1:${PREVIEW_DEBUG_PORT}`;
+        const executor = createAgentExecutor({
+          mode: "standard",
+          targetUrl: url,
+          cdpUrl: cdpUrl,
+          timeoutMs: 30000,
+          onStep: (event) => console.log("[Vision Captcha]", event.instruction, event.status)
+        });
+        await executor.startSession({
+          mode: "standard",
+          targetUrl: url,
+          cdpUrl: cdpUrl,
+          timeoutMs: 30000
+        });
+        await executor.execute(batchJson, null);
+        await executor.stopSession();
+        return { ok: true, message: `Executed ${batchJson.actions.length} vision actions.` };
+      } else {
+        return { ok: false, error: `Could not parse valid batch JSON from Groq. Raw: ${textResponse}` };
+      }
+    } catch (err) {
+      return { ok: false, error: String(err) };
     }
   });
 
