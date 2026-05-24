@@ -31,7 +31,6 @@ import type {
   QaTask,
   QaReport,
   QaIssue,
-  QaTemplate,
   QaVerdict,
   BrowserState,
   AppProgressEvent,
@@ -252,18 +251,10 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
   const [showUrlHint, setShowUrlHint] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [creating, setCreating] = useState(false);
-  const [templates, setTemplates] = useState<QaTemplate[]>([]);
-  const [templateId, setTemplateId] = useState("");
-
-  useEffect(() => {
-    if (!window.qaApi) return;
-    void window.qaApi.listTemplates().then(setTemplates);
-  }, []);
 
   const handleCreateTask = useCallback(async () => {
     if (!inputName.trim() || !window.qaApi) return;
-    const selectedTemplate = templates.find((template) => template.id === templateId);
-    const targetUrl = selectedTemplate?.url || browserUrl;
+    const targetUrl = browserUrl;
     if (!targetUrl) {
       setUrlError("Navigate to a URL first using the bar above");
       setShowUrlHint(true);
@@ -275,8 +266,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     try {
       const task = await window.qaApi.createTask({
         name: inputName.trim(),
-        targetUrl,
-        templateId: selectedTemplate?.id
+        targetUrl
       });
       setTasks((prev) => [task, ...prev]);
       onSelectTask(task.id);
@@ -285,17 +275,7 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
     } finally {
       setCreating(false);
     }
-  }, [inputName, browserUrl, onSelectTask, onRefresh, setTasks, templateId, templates]);
-
-  const handleTemplateChange = useCallback((value: string) => {
-    setTemplateId(value);
-    const selectedTemplate = templates.find((template) => template.id === value);
-    if (selectedTemplate) {
-      setInputName(selectedTemplate.task);
-      setUrlError("");
-      setShowUrlHint(false);
-    }
-  }, [templates]);
+  }, [inputName, browserUrl, onSelectTask, onRefresh, setTasks]);
 
   return (
     <div className="window-no-drag mt-4 flex flex-1 flex-col overflow-hidden">
@@ -328,17 +308,6 @@ function TaskPanel({ tasks, activeTaskId, onSelectTask, onRefresh, setTasks, bro
 
       {/* New task chat-style input (pinned to bottom) */}
       <div className="mt-auto pt-3 border-t border-white/5 space-y-1.5">
-        <select
-          className="h-8 w-full rounded-lg border border-white/5 bg-white/5 px-2 text-[11px] text-zinc-300 outline-none focus:border-white/10"
-          value={templateId}
-          onChange={(e) => handleTemplateChange(e.target.value)}
-          title="QA Template"
-        >
-          <option value="">Custom task</option>
-          {templates.map((template) => (
-            <option key={template.id} value={template.id}>{template.title}</option>
-          ))}
-        </select>
         <div className="relative flex items-center">
           <input
             className={`h-9 w-full rounded-full border border-white/5 bg-white/5 pl-4 pr-10 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none transition-all duration-200 focus:border-white/10 focus:bg-white/10${urlError ? " border-red-500/50" : ""}`}
