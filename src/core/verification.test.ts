@@ -58,6 +58,25 @@ function observation(value: string = 'testuser@example.com'): PageObservation {
         confidence: 1,
         bbox: { x: 0, y: 30, width: 100, height: 20 },
         nearby_text: []
+      },
+      {
+        field_id: 'field_credit_card_type_40cc__type',
+        temporary_observation_id: 'elem_12',
+        label: 'Credit Card Type',
+        selector: 'select[name="40cc__type"]',
+        selector_candidates: ['select[name="40cc__type"]'],
+        tag: 'select',
+        type: 'select',
+        name: '40cc__type',
+        html_id: '',
+        initial_value: '0',
+        value: '9',
+        selected_value: '9',
+        selected_label: 'Visa (Preferred)',
+        label_source: 'name',
+        confidence: 1,
+        bbox: { x: 0, y: 60, width: 100, height: 20 },
+        nearby_text: []
       }
     ]
   };
@@ -98,5 +117,28 @@ describe('verifyPlanAssertions action-derived form oracle', () => {
     const assertions = verifyPlanAssertions({ plan, observation: observation(), actions, evidence: [], llmReport: null });
     expect(assertions[0].status).toBe('PASS');
     expect(assertions[0].actual).toContain('12');
+  });
+
+  it('formats select actual labels with bracketed values and compact evidence', () => {
+    const actions: QaRunAction[] = [{
+      action_id: 'A003.1',
+      action: 'select',
+      field_id: 'field_credit_card_type_40cc__type',
+      selector: 'select[name="40cc__type"]',
+      label: 'Credit Card Type',
+      planned_value: 'Visa',
+      input: 'Visa',
+      action_result: 'SUCCESS',
+      timestamp: '2026-05-24T00:00:00.000Z'
+    }];
+
+    const assertions = verifyPlanAssertions({ plan, observation: observation(), actions, evidence: ['old noisy evidence'], llmReport: null });
+    expect(assertions[0].actual).toBe('Visa (Preferred) [value=9]');
+    expect(assertions[0].selector).toBe('select[name="40cc__type"]');
+    expect(assertions[0].evidence).toEqual([
+      'selector: select[name="40cc__type"]',
+      'screenshot: screenshots/04_final_state.png',
+      'dom: dom/dom-after.json#field_credit_card_type_40cc__type'
+    ]);
   });
 });

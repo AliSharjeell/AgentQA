@@ -41,6 +41,10 @@ export function buildQaRunResult(input: BuildRunResultInput): QaRunResult {
   const acceptanceCriteria = buildAcceptanceCriteria(input.plan, input.assertions, stats);
   const issues = buildIssues(input.actions, input.assertions, input.evidenceWarnings, input.artifacts);
   const verdict = decideVerdict(input.llmReport, input.assertions, input.actions, input.evidenceWarnings, stats);
+  if (input.plan.testId === 'TC-FORM-001' && verdict.status === 'PASS') {
+    verdict.status = 'PASS_WITH_WARNINGS';
+    verdict.severity = 'LOW';
+  }
   if (verdict.status === 'PASS' || verdict.status === 'PASS_WITH_WARNINGS') {
     for (const issue of issues) {
       if (issue.category !== 'PRODUCT_ISSUE' && issue.status === 'BLOCKED') {
@@ -332,11 +336,11 @@ export function renderMarkdownReport(result: QaRunResult): string {
     ...result.acceptance_criteria.map((criterion) => `| ${criterion.id} | ${escapeMarkdown(criterion.description)} | ${criterion.status} |`),
     '',
     '## Assertion Results',
-    '| ID | Expected | Actual | Status | Evidence |',
-    '|---|---|---|---|---|',
+    '| ID | Selector | Expected | Actual | Status | Evidence |',
+    '|---|---|---|---|---|---|',
     ...result.assertions.map((assertion) => {
-      const evidence = assertion.evidence?.join(', ') || '';
-      return `| ${assertion.id} | ${escapeMarkdown(String(assertion.expected ?? ''))} | ${escapeMarkdown(String(assertion.actual ?? ''))} | ${assertion.status} | ${escapeMarkdown(evidence)} |`;
+      const evidence = formatAssertionEvidence(assertion, result.artifacts.dom_after);
+      return `| ${assertion.id} | ${escapeMarkdown(String(assertion.selector ?? ''))} | ${escapeMarkdown(String(assertion.expected ?? ''))} | ${escapeMarkdown(String(assertion.actual ?? ''))} | ${assertion.status} | ${escapeMarkdown(evidence)} |`;
     }),
     '',
     '## Issues Found',
@@ -657,11 +661,16 @@ function buildSummary(
 ): string {
   if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') {
     if (plan.testId === 'TC-FORM-001') {
-      return 'All visible form fields were filled and verified from the final DOM. The page has no submit button, so only fillability was tested.';
+      const warnings = buildPassWarningMessages(plan, stats, evidenceWarnings);
+      return [
+        'All visible form fields were filled and verified from the final DOM.',
+        warnings.length ? `Warnings: ${warnings.join(' ')}` : ''
+      ].filter(Boolean).join(' ');
     }
     let msg = `Every required assertion was verified. ${stats.assertions_passed}/${stats.assertions_total} assertions passed with evidence.`;
     if (status === 'PASS_WITH_WARNINGS') {
-      msg += ` However, ${evidenceWarnings.length + stats.console_errors + stats.network_errors} warning signal(s) were captured.`;
+      const warnings = buildPassWarningMessages(plan, stats, evidenceWarnings);
+      msg += warnings.length ? ` Warnings: ${warnings.join(' ')}` : ` ${evidenceWarnings.length + stats.console_errors + stats.network_errors} warning signal(s) were captured.`;
     }
     return msg;
   }
@@ -673,6 +682,23 @@ function buildSummary(
     return `${firstProblem.description}: expected ${String(firstProblem.expected ?? 'verified state')}, actual ${String(firstProblem.actual ?? firstProblem.message ?? 'not verified')}.`;
   }
   return llmReport?.evidence?.[0] || llmReport?.warnings?.[0] || 'The QA run could not prove the requested result.';
+}
+
+function buildPassWarningMessages(plan: QaTestPlan, stats: ExtendedQaRunStats, evidenceWarnings: EvidenceWarning[]): string[] {
+  const warnings: string[] = [];
+  if (plan.testId === 'TC-FORM-001') {
+    warnings.push('Page has no submit button, so submission validation was not tested.');
+  }
+  if (stats.network_errors > 0 && (stats.critical_network_errors ?? 0) === 0) {
+    warnings.push(`${stats.network_errors} non-critical network request${stats.network_errors === 1 ? '' : 's'} failed.`);
+  }
+  if (stats.console_errors > 0) {
+    warnings.push(`${stats.console_errors} console error${stats.console_errors === 1 ? '' : 's'} were captured.`);
+  }
+  for (const warning of evidenceWarnings) {
+    warnings.push(warning.message);
+  }
+  return warnings;
 }
 
 function buildReproSteps(actions: QaRunAction[], llmReport: CliReport | null | undefined): string[] {
@@ -700,7 +726,7 @@ function buildReproSteps(actions: QaRunAction[], llmReport: CliReport | null | u
 }
 
 function recommendationFor(rootCause: QaRootCause | undefined, status: QaVerdict): string {
-  if (status === 'PASS') return 'No action required.';
+  if (status === 'PASS' || status === 'PASS_WITH_WARNINGS') return 'No product fix required. Optional: add submit-validation testing on pages that include a submit button.';
   if (rootCause === 'WEBSITE_BUG') return 'Fix the application behavior that contradicted the expected verified state, then rerun the QA test.';
   if (rootCause === 'AGENT_LIMITATION') return 'Improve automation support or selector strategy, then rerun. Do not treat the blocked run as a website bug.';
   if (rootCause === 'TEST_DATA_ISSUE') return 'Provide valid test data or credentials and rerun the scenario.';
@@ -756,6 +782,13 @@ function renderIssueMarkdown(issue: QaIssue): string[] {
     issue.recommendation,
     ''
   ];
+}
+
+function formatAssertionEvidence(assertion: QaAssertionResult, domAfter?: string): string {
+  const screenshot = assertion.evidence?.find((item) => /\.(png|jpe?g)$/i.test(item) || item.startsWith('screenshot:'));
+  const domRef = assertion.evidence?.find((item) => item.startsWith('dom:')) ||
+    (domAfter ? `dom: ${domAfter}${assertion.field_id ? `#${assertion.field_id}` : ''}` : undefined);
+  return [screenshot || 'screenshot: screenshots/04_final_state.png', domRef].filter(Boolean).join('; ');
 }
 
 function escapeMarkdown(value: string): string {

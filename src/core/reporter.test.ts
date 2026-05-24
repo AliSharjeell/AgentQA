@@ -101,6 +101,7 @@ describe('QA verdict reporting', () => {
     const result = build();
     expect(result.status).toBe('PASS');
     expect(result.stats.assertions_passed).toBe(1);
+    expect(result.recommendation).toBe('No product fix required. Optional: add submit-validation testing on pages that include a submit button.');
   });
 
   it('returns FAIL for a verified real app behavior contradiction', () => {
@@ -259,6 +260,33 @@ describe('QA verdict reporting', () => {
     });
     expect(result.status).toBe('PASS_WITH_WARNINGS');
     expect(result.root_cause).toBeUndefined();
+  });
+
+  it('uses explicit PASS_WITH_WARNINGS summary text for form fillability warnings', () => {
+    const formPlan: QaTestPlan = {
+      ...basePlan,
+      testId: 'TC-FORM-001',
+      title: 'Verify form fillability'
+    };
+    const result = buildQaRunResult({
+      runId: 'qa-run-unit',
+      plan: formPlan,
+      targetUrl: 'https://example.test',
+      startedAt: '2026-05-24T00:00:00.000Z',
+      endedAt: '2026-05-24T00:00:01.000Z',
+      durationMs: 1000,
+      actions: [passAction()],
+      assertions: [passAssertion()],
+      observations: [{ ...observation, networkErrors: [{ url: 'https://analytics.example/pixel', method: 'GET', status: 'net::ERR_ABORTED', resource_type: 'Fetch', is_critical: false, reason: 'non-critical analytics' }] }],
+      llmReport: null,
+      evidence: [],
+      evidenceWarnings: [],
+      artifacts: { html_report: '', markdown_report: '', json_result: '', screenshots_dir: '' }
+    });
+
+    expect(result.status).toBe('PASS_WITH_WARNINGS');
+    expect(result.summary).toContain('Page has no submit button, so submission validation was not tested.');
+    expect(result.summary).toContain('1 non-critical network request failed.');
   });
 
   // Bug Fix 10: AI reasoning tab says [object Object]

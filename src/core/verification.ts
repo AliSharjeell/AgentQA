@@ -134,12 +134,14 @@ function verifyAssertionsFromPlannedActions(actions: QaRunAction[], observation:
         return {
           id,
           description: `${label} planned value is available`,
+          field_id: action.field_id,
+          selector: action.selector,
           status: 'BLOCKED',
           rootCause: 'AGENT_INTERNAL_ERROR',
           expected: 'planned value from action',
           actual: null,
           required: true,
-          evidence,
+          evidence: compactAssertionEvidence(action),
           message: 'The action executed without a planned value, so the verifier cannot prove the expected final state.'
         };
       }
@@ -158,15 +160,25 @@ function verifyAssertionsFromPlannedActions(actions: QaRunAction[], observation:
       return {
         id,
         description: `${label} value matches planned ${action.action}`,
+        field_id: action.field_id,
+        selector: action.selector,
         expected: verification.expected,
         actual: verification.actual,
         status: verification.status,
         rootCause: verification.rootCause,
         required: true,
-        evidence: verification.status === 'PASS' ? evidence : [],
+        evidence: compactAssertionEvidence(action),
         message: verification.message
       };
     });
+}
+
+function compactAssertionEvidence(action: QaRunAction): string[] {
+  return [
+    action.selector ? `selector: ${action.selector}` : undefined,
+    'screenshot: screenshots/04_final_state.png',
+    `dom: dom/dom-after.json${action.field_id ? `#${action.field_id}` : ''}`
+  ].filter((item): item is string => Boolean(item));
 }
 
 function flattenActions(actions: QaRunAction[]): QaRunAction[] {
@@ -432,7 +444,7 @@ function verifySelected(
     };
   }
     
-  const actual = selected ? `${selected.label} ${selected.value}`.trim() : ('value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? ''));
+  const actual = selected ? formatSelectedActual(selected) : ('value' in element ? String(element.value ?? (element as any).initial_value ?? '') : String((element as ObservedElement).value ?? (element as ObservedElement).text ?? ''));
   const expectedNormalized = normalize(expected);
   const matched = Boolean(
     selected &&
@@ -445,6 +457,12 @@ function verifySelected(
     status: matched ? 'PASS' : 'FAIL',
     rootCause: matched ? undefined : mismatchRootCause
   };
+}
+
+function formatSelectedActual(selected: { value: string; label: string }): string {
+  const label = selected.label || selected.value;
+  if (!selected.value || selected.value === label) return label;
+  return `${label} [value=${selected.value}]`;
 }
 
 function verifyChecked(

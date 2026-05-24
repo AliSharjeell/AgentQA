@@ -842,6 +842,13 @@ function buildDomSnapshotPython(): string {
         const name = String(el.getAttribute('name') || '').toLowerCase();
         const id = String(el.id || '').toLowerCase();
         const label = String(description || '').replace(/\\s+/g, ' ').trim();
+        const knownNameLabels = {
+          '43cvc': 'Card Verification Code',
+          '46cccstsvc': 'Card Customer Service Phone',
+          '61pers_ssn': 'Social Security Number',
+          '62driv_lic': 'Driver License Number'
+        };
+        if (knownNameLabels[name]) return knownNameLabels[name];
         const haystack = (label + ' ' + name + ' ' + id).toLowerCase();
         const isMonth = /(month|_mm|(^|[^a-z])mm([^a-z]|$)|[0-9]+mm)/.test(haystack);
         const isDay = /(day|_dd|(^|[^a-z])dd([^a-z]|$)|[0-9]+dd)/.test(haystack);
@@ -856,6 +863,10 @@ function buildDomSnapshotPython(): string {
           if (isYear) return 'Birth Year';
         }
         if (/^year\\s+[0-9]{4}/i.test(label) && /[0-9]+yy/.test(name)) return 'Birth Year';
+        if (/cvc|cvv|card.?verification/.test(haystack)) return 'Card Verification Code';
+        if (/cccstsvc|customer.?service/.test(haystack)) return 'Card Customer Service Phone';
+        if (/pers_ssn|social.?security|\\bssn\\b/.test(haystack)) return 'Social Security Number';
+        if (/driv_lic|driver.?lic/.test(haystack)) return 'Driver License Number';
         if (/(e-mail|email|mailadr)/.test(haystack)) return 'Email';
         if (/(web site|website|url)/.test(haystack)) return 'Website';
         return label;

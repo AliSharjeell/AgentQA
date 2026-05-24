@@ -245,6 +245,8 @@ export interface QaAssertionResult {
   id: string;
   description: string;
   status: QaVerdict;
+  field_id?: string;
+  selector?: string;
   expected?: string | number | boolean | null;
   actual?: string | number | boolean | null;
   rootCause?: QaRootCause;
