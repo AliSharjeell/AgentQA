@@ -10,8 +10,10 @@ import {
   buildObjectiveProgress,
   classifyTransactionAction,
   classifyTransactionLabel,
+  findBestFinalActionCandidate,
   findNextUnresolvedSection,
   isEmptyObservation,
+  isTransactionForwardActionText,
   relevantFieldsForVerification,
   repeatedCartViewNoProgress
 } from './state';
@@ -230,6 +232,8 @@ describe('transaction/navigation reliability', () => {
     expect(classifyTransactionLabel('Shopping Bag')).toBe('CART_VIEW');
     expect(classifyTransactionLabel('Review Bag')).toBe('CART_VIEW');
     expect(classifyTransactionLabel('Add to Bag')).toBe('ADD_ACTION');
+    expect(classifyTransactionLabel('Continue')).toBe('ADD_ACTION');
+    expect(isTransactionForwardActionText('Continue')).toBe(true);
     expect(classifyTransactionAction(successAction('click', 'Shopping Bag'))).toBe('CART_VIEW');
     expect(classifyTransactionAction(successAction('click', 'Shopping Bag'))).not.toBe('ADD_ACTION');
   });
@@ -291,6 +295,29 @@ describe('transaction/navigation reliability', () => {
 
     expect(verified.action_result).toBe('SUCCESS');
     expect(verified.verification?.status).toBe('PASS');
+  });
+
+  it('does not classify immediate option readback mismatch as a website bug', () => {
+    const target = element({ id: 'radio_1', type: 'radio', role: 'radio', description: 'Option A', selector: '#option-a', checked: false });
+    const obs = observation({ elementRegistry: [{ ...target, checked: false }] });
+    const outcome: ExecutorActionOutcome = {
+      ok: true,
+      status: 'success',
+      message: 'Clicked option',
+      observation: obs,
+      actionResult: 'Clicked option',
+      executor: 'standard-cdp'
+    };
+    const verified = verifyAction({
+      actionId: 'A001',
+      action: { action: 'radio', targetId: 'radio_1', value: 'Option A', _target: target },
+      target,
+      outcome,
+      timestamp: '2026-05-24T00:00:00.000Z'
+    });
+
+    expect(verified.verification?.status).toBe('FAIL');
+    expect(verified.verification?.rootCause).toBe('AMBIGUOUS_STATE');
   });
 
   it('detects repeated cart-view actions as no progress', () => {
@@ -390,12 +417,86 @@ describe('transaction/navigation reliability', () => {
     const result = transactionResult(finalObservation, [
       successAction('click', 'Choose option A', { action_id: 'A001' }),
       successAction('click', 'Select option B', { action_id: 'A002' }),
-      successAction('click', 'Add to Cart', { action_id: 'A003' })
+      successAction('click', 'Continue', { action_id: 'A003' })
     ]);
 
     expect(firstProgress.final_cta_search_gated).toBe(true);
     expect(firstProgress.next_unresolved_section?.candidate_actions[0].id).toBe('option_a');
     expect(result.status).toBe('PASS');
     expect(result.assertions.find((assertion) => assertion.id === 'M6_CART_OR_BAG_VERIFIED')?.status).toBe('PASS');
+  });
+
+  it('prioritizes an enabled Continue CTA after prerequisite selections are visible', () => {
+    const obs = observation({
+      elementRegistry: [
+        element({ id: 'applecare_none', description: 'No protection coverage', type: 'radio', role: 'radio', selector: '#none' }),
+        element({ id: 'continue', description: 'Continue', type: 'button', role: 'button', selector: '#continue', disabled: false })
+      ],
+      fieldRegistry: [
+        field(1, { label: 'Model', value: 'Product Pro' }),
+        field(2, { label: 'Color', value: 'Silver' }),
+        field(3, { label: 'Storage', value: '256GB' }),
+        field(4, { label: 'Carrier', value: 'Connect later' })
+      ],
+      pageText: 'Protection coverage. No protection coverage. Your new Product Pro awaits. Continue.'
+    });
+    const progress = buildObjectiveProgress({
+      task: TASK,
+      intent: 'TRANSACTION_OR_CART',
+      observation: obs,
+      actions: [
+        successAction('click', 'Product Pro'),
+        successAction('click', 'Silver', { action_id: 'A002' }),
+        successAction('click', '256GB', { action_id: 'A003' }),
+        successAction('click', 'Connect later', { action_id: 'A004' })
+      ],
+      history: []
+    });
+
+    expect(progress.final_cta_search_gated).toBe(false);
+    expect(progress.milestones.final_cta_found).toBe(true);
+    expect(progress.action_priority[0]).toContain('Click the relevant enabled final/forward CTA');
+  });
+
+  it('selects an enabled final add CTA over cart-view actions and further scrolling', () => {
+    const obs = observation({
+      elementRegistry: [
+        element({ id: 'bag_icon', description: 'Shopping Bag', selector: '#bag', role: 'button' }),
+        element({ id: 'faq', description: 'Show more', selector: '#faq', role: 'button' }),
+        element({ id: 'add', description: 'Add to Bag', text: 'Add to Bag', selector: 'button[name="add-to-cart"]', role: 'button', y: 3300 })
+      ],
+      fieldRegistry: [
+        field(1, { label: 'Model', value: 'Product Pro' }),
+        field(2, { label: 'Color', value: 'Silver' }),
+        field(3, { label: 'Storage', value: '256GB' }),
+        field(4, { label: 'Carrier', value: 'Connect later' })
+      ],
+      pageText: 'Your new Product Pro. Just the way you want it. Add to Bag. Shopping Bag.'
+    });
+
+    const candidate = findBestFinalActionCandidate({
+      task: TASK,
+      intent: 'TRANSACTION_OR_CART',
+      observation: obs,
+      actions: []
+    });
+
+    expect(candidate?.id).toBe('add');
+    expect(candidate?.selector).toBe('button[name="add-to-cart"]');
+  });
+
+  it('does not verify cart contents from a bag icon after a forward CTA click', () => {
+    const result = transactionResult(
+      observation({
+        elementRegistry: [element({ id: 'bag', description: 'Shopping Bag', selector: '#bag', role: 'button' })],
+        pageText: 'Product Pro configuration. Continue. Shopping Bag.',
+        page: { url: 'https://example.test/product', title: 'Product Pro' }
+      }),
+      [successAction('click', 'Continue')]
+    );
+
+    expect(result.status).toBe('BLOCKED');
+    expect(result.assertions.find((assertion) => assertion.id === 'M5_ADD_ACTION_CLICKED')?.status).toBe('PASS');
+    expect(result.assertions.find((assertion) => assertion.id === 'M6_CART_OR_BAG_VERIFIED')?.status).toBe('BLOCKED');
   });
 });

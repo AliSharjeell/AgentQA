@@ -285,9 +285,9 @@ function verificationForAction(
       return verifySelected(action.value ?? '', actualTarget, 'AGENT_INTERNAL_ERROR');
     case 'check':
     case 'radio':
-      return verifyChecked(true, actualTarget);
+      return verifyChecked(true, actualTarget, 'AMBIGUOUS_STATE');
     case 'uncheck':
-      return verifyChecked(false, actualTarget);
+      return verifyChecked(false, actualTarget, 'AMBIGUOUS_STATE');
     case 'assert_value':
       return {
         expected: action.value ?? '',

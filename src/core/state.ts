@@ -63,7 +63,8 @@ type HistoryLike = Array<{
 }>;
 
 const REQUIRED_SECTION_RE = /\b(choose|select|required|option|model|variant|color|size|storage|plan|carrier|payment|billing|method|trade in|trade-in|protection|coverage|delivery|pickup|shipping|terms|contact|address|email|phone|name|configuration|customize|preference)\b/i;
-const FINAL_ACTION_RE = /\b(add to cart|add to bag|add to basket|add item|add product|submit|checkout|save|apply|continue|create account|book|reserve|send|buy|purchase|place order)\b/i;
+const FINAL_ACTION_RE = /\b(add to cart|add to bag|add to basket|add item|add product|continue|checkout|submit|place order|create account|book|reserve|send|save|apply)\b/i;
+const FORWARD_CTA_RE = /^(continue|checkout|submit|place order|review order|create account|book|reserve|send|save|apply)$/i;
 
 function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -91,6 +92,7 @@ export function classifyTransactionLabel(label: string): TransactionActionClass 
   if (!text) return 'OTHER';
   if (text === 'add') return 'ADD_ACTION';
   if (/\badd\b/.test(text) && /\b(cart|bag|basket)\b/.test(text)) return 'ADD_ACTION';
+  if (FORWARD_CTA_RE.test(text)) return 'ADD_ACTION';
   if (/\bcontinue\b.*\b(cart|bag|basket)\b/.test(text)) return 'ADD_ACTION';
   if (/\breview\b.*\b(cart|bag|basket)\b.*\b(after add|after adding|added)\b/.test(text)) return 'ADD_ACTION';
   if (/\b(after add|after adding|added)\b.*\breview\b.*\b(cart|bag|basket)\b/.test(text)) return 'ADD_ACTION';
@@ -104,8 +106,15 @@ export function classifyTransactionAction(action: QaRunAction): TransactionActio
   return classifyTransactionLabel(actionText(action));
 }
 
+export function isTransactionForwardActionText(value: string): boolean {
+  const text = normalize(value);
+  if (!text) return false;
+  if (classifyTransactionLabel(text) === 'ADD_ACTION') return true;
+  return FINAL_ACTION_RE.test(text) && classifyTransactionLabel(text) !== 'CART_VIEW';
+}
+
 export function hasSuccessfulAddAction(actions: QaRunAction[]): boolean {
-  return flattenActions(actions).some((action) => action.action_result === 'SUCCESS' && classifyTransactionAction(action) === 'ADD_ACTION');
+  return flattenActions(actions).some((action) => action.action_result === 'SUCCESS' && isTransactionForwardActionText(actionText(action)));
 }
 
 export function cartViewClicksBeforeAdd(actions: QaRunAction[]): number {
@@ -158,7 +167,41 @@ function compactElement(element: ObservedElement, maxText: number): QaCompactEle
 
 function isFinalActionElement(element: ObservedElement): boolean {
   const text = elementText(element);
-  return classifyTransactionLabel(text) === 'ADD_ACTION' || FINAL_ACTION_RE.test(text);
+  return isTransactionForwardActionText(text);
+}
+
+export function findBestFinalActionCandidate(input: {
+  task: string;
+  intent: QaTaskIntent;
+  observation: PageObservation;
+  actions: QaRunAction[];
+}): ObservedElement | null {
+  if (!hasFinalActionGoal(input.task, input.intent) || hasSuccessfulAddAction(input.actions)) return null;
+  const terms = taskTerms(input.task);
+
+  const scored = elementRegistryForObservation(input.observation)
+    .filter((element) => element.visible !== false)
+    .filter((element) => !element.disabled)
+    .map((element) => {
+      const text = elementText(element);
+      if (!isTransactionForwardActionText(text)) return null;
+      const normalized = normalize(text);
+      const role = normalize(`${element.role || ''} ${element.type || ''} ${element.tag || ''}`);
+      const exactLabel = normalize(`${element.description || ''} ${element.text || ''} ${element.value || ''}`);
+      const score =
+        (/\badd\b.*\b(cart|bag|basket)\b/.test(normalized) ? 100 : 0) +
+        (/\bcontinue\b/.test(exactLabel) ? 70 : 0) +
+        (/\b(submit|checkout|place order|review order|save|apply)\b/.test(exactLabel) ? 65 : 0) +
+        (/\b(button|submit)\b/.test(role) ? 15 : 0) +
+        scoreText(text, terms, input.intent) -
+        (classifyTransactionLabel(text) === 'CART_VIEW' ? 200 : 0);
+      return { element, score };
+    })
+    .filter((item): item is { element: ObservedElement; score: number } => Boolean(item))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  return scored[0]?.element || null;
 }
 
 function isOptionLikeElement(element: ObservedElement): boolean {
@@ -291,7 +334,7 @@ export function buildCompactFinalState(input: {
   const buttonLike = (element: ObservedElement) => ['button', 'submit', 'menuitem', 'tab'].includes(element.type) || element.tag === 'button' || element.role === 'button';
   const linkLike = (element: ObservedElement) => element.type === 'link' || element.tag === 'a' || element.role === 'link';
   const optionLike = (element: ObservedElement) => ['option', 'radio', 'checkbox', 'select', 'combobox', 'card'].includes(element.type) || ['option', 'radio', 'checkbox'].includes(element.role || '');
-  const actionCandidate = (element: ObservedElement) => scoreText(elementText(element), taskTerms(input.task), input.intent) > 0 || classifyTransactionLabel(elementText(element)) !== 'OTHER';
+  const actionCandidate = (element: ObservedElement) => scoreText(elementText(element), taskTerms(input.task), input.intent) > 0 || classifyTransactionLabel(elementText(element)) !== 'OTHER' || isTransactionForwardActionText(elementText(element));
   const selectedOptions = [
     ...(input.observation.fieldRegistry || []).filter((field) => field.checked || field.selected_value || field.value).map((field) => `${field.label}: ${field.selected_label || field.selected_value || field.value || field.checked}`),
     ...elementRegistryForObservation(input.observation).filter((element) => element.selected || element.checked).map((element) => element.description || element.text || element.selector)
@@ -406,15 +449,23 @@ export function transactionMilestones(input: {
   const terms = taskTerms(input.task);
   const finalText = normalize(`${compactState.url} ${compactState.title} ${compactState.pageTextExcerpt}`);
   const actions = flattenActions(input.actions);
-  const addClicked = actions.some((action) => action.action_result === 'SUCCESS' && classifyTransactionAction(action) === 'ADD_ACTION');
+  const addClicked = actions.some((action) => action.action_result === 'SUCCESS' && isTransactionForwardActionText(actionText(action)));
   const cartViewClicks = actions.filter((action) => action.action_result === 'SUCCESS' && classifyTransactionAction(action) === 'CART_VIEW');
-  const addCandidate = compactState.candidateActions.some((element) => classifyTransactionLabel(`${element.label} ${element.text || ''}`) === 'ADD_ACTION');
+  const addCandidate = compactState.candidateActions.some((element) => isTransactionForwardActionText(`${element.label} ${element.text || ''}`) && element.enabled !== false);
   const targetFound = terms.length === 0 || terms.some((term) => finalText.includes(normalize(term)) || actions.some((action) => actionText(action).includes(normalize(term))));
   const configurationStarted = targetFound && actions.some((action) => ['click', 'select', 'check', 'radio', 'fill', 'type'].includes(action.action) && classifyTransactionAction(action) !== 'CART_VIEW');
   const optionEvidence = compactState.selectedOptions.length > 0 || actions.some((action) => ['select', 'check', 'radio'].includes(action.action));
+  const cartIndicatorText = normalize(compactState.cartIndicators.join(' '));
+  const cartContextText = normalize(`${compactState.url} ${compactState.title} ${cartIndicatorText}`);
+  const hasCartContext = /\b(cart|bag|basket|checkout|order summary|subtotal|quantity)\b/.test(cartContextText);
+  const cartCountChanged = /\b(cart|bag|basket)\b.*\b([1-9]\d*|item|items)\b/.test(cartIndicatorText);
+  const itemInCartIndicators = terms.length === 0 || terms.some((term) => cartIndicatorText.includes(normalize(term)));
+  const itemInCartPageContext = /\b(cart|bag|basket|checkout|order summary|subtotal|quantity)\b/.test(finalText) &&
+    terms.some((term) => finalText.includes(normalize(term))) &&
+    /\b(subtotal|quantity|item|items|checkout|order summary)\b/.test(finalText);
   const cartVerified = addClicked &&
-    compactState.cartIndicators.length > 0 &&
-    (terms.length === 0 || terms.some((term) => finalText.includes(normalize(term)) || compactState.cartIndicators.some((item) => normalize(item).includes(normalize(term)))));
+    hasCartContext &&
+    (cartCountChanged || itemInCartIndicators || itemInCartPageContext);
 
   return [
     milestone(
@@ -484,9 +535,10 @@ export function buildObjectiveProgress(input: {
     limits: { maxVerifierElements: 40, maxPageText: 1200 }
   });
   const nextSection = findNextUnresolvedSection(input);
-  const finalCtaFound = compact.candidateActions.some((element) => classifyTransactionLabel(`${element.label} ${element.text || ''}`) === 'ADD_ACTION' || FINAL_ACTION_RE.test(`${element.label} ${element.text || ''}`));
+  const finalCtaFound = compact.candidateActions.some((element) => isTransactionForwardActionText(`${element.label} ${element.text || ''}`));
+  const enabledFinalCtaFound = compact.candidateActions.some((element) => element.enabled !== false && isTransactionForwardActionText(`${element.label} ${element.text || ''}`));
   const finalCtaClicked = hasSuccessfulAddAction(input.actions) ||
-    flattenActions(input.actions).some((action) => action.action_result === 'SUCCESS' && FINAL_ACTION_RE.test(actionText(action)));
+    flattenActions(input.actions).some((action) => action.action_result === 'SUCCESS' && isTransactionForwardActionText(actionText(action)));
   const milestones = input.intent === 'TRANSACTION_OR_CART'
     ? transactionMilestones({ task: input.task, observation: input.observation, actions: input.actions, compactState: compact })
     : [];
@@ -510,7 +562,7 @@ export function buildObjectiveProgress(input: {
     .map((entry) => `${entry.action}: ${truncateText(entry.result, 120)}`)
     .slice(-5);
   const requiredResolved = compact.selectedOptions;
-  const finalCtaSearchGated = hasFinalActionGoal(input.task, input.intent) && Boolean(nextSection) && !finalCtaFound;
+  const finalCtaSearchGated = hasFinalActionGoal(input.task, input.intent) && Boolean(nextSection) && !enabledFinalCtaFound;
   const warnings: string[] = [];
   if (isEmptyObservation(input.observation)) warnings.push('Observation is empty; wait and re-observe before any scroll/click.');
   if (finalCtaSearchGated) warnings.push('Do not scroll/search for the final CTA until the visible unresolved section is handled.');
@@ -520,8 +572,9 @@ export function buildObjectiveProgress(input: {
 
   const actionPriority = [
     isEmptyObservation(input.observation) ? 'Wait 1s and re-observe; do not scroll from an empty observation.' : '',
-    nextSection ? `Resolve visible required section: ${nextSection.section_label}.` : '',
-    !nextSection && finalCtaFound ? 'Click the relevant final CTA if it matches the goal.' : '',
+    finalCtaFound && enabledFinalCtaFound ? 'Click the relevant enabled final/forward CTA if it matches the goal.' : '',
+    nextSection && !enabledFinalCtaFound ? `Resolve visible required section: ${nextSection.section_label}.` : '',
+    finalCtaFound && !enabledFinalCtaFound ? 'The final/forward CTA is present but disabled-looking; resolve prerequisites or choose visible required sections first.' : '',
     !nextSection && !finalCtaFound ? 'Scroll only to reveal the next section or final CTA, then re-observe.' : '',
     input.intent === 'TRANSACTION_OR_CART' ? 'Open cart/bag only after an add action was executed, or once for diagnostic evidence.' : '',
     'Stop as blocked only after no-progress evidence and deterministic final-state checks.'

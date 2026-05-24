@@ -24,6 +24,7 @@ import {
   cartViewClicksBeforeAdd,
   classifyTransactionLabel,
   compactObservationForReport,
+  findBestFinalActionCandidate,
   hasSuccessfulAddAction,
   isEmptyObservation,
   relevantFieldsForVerification,
@@ -428,15 +429,18 @@ function applyFinalFieldVerificationToActions(actions: QaRunAction[], registry: 
 }
 
 function addConsoleFaults(faults: QaFault[], observation: PageObservation, step: string): QaFault[] {
-  const consoleFaults = observation.consoleErrors.map((error) => ({
+  const consoleFaults = observation.consoleErrors.map((error) => {
+    const text = typeof error === 'string' ? error : JSON.stringify(error);
+    return {
     severity: 'warning' as const,
     type: 'console_error' as const,
     title: 'Console error observed',
-    details: error.slice(0, 300),
-    evidence: [error],
+    details: text.slice(0, 300),
+    evidence: [text],
     url: observation.page.url || '',
     step
-  }));
+    };
+  });
   return mergeFaults(faults, consoleFaults);
 }
 
@@ -492,6 +496,62 @@ function structuredActionText(action: StructuredAction, target: ObservedElement 
     target?.text,
     target?.selector
   ].filter(Boolean).join(' ');
+}
+
+function classifyPlannedTransactionAction(action: StructuredAction, target: ObservedElement | null): 'ADD_ACTION' | 'CART_VIEW' | 'OTHER' {
+  const fragments = [
+    structuredActionText(action, target),
+    target?.description || '',
+    target?.text || '',
+    String(target?.value || '')
+  ];
+  if (fragments.some((fragment) => classifyTransactionLabel(fragment) === 'ADD_ACTION')) return 'ADD_ACTION';
+  if (fragments.some((fragment) => classifyTransactionLabel(fragment) === 'CART_VIEW')) return 'CART_VIEW';
+  return 'OTHER';
+}
+
+function isTransientPostActionObservationError(message: string): boolean {
+  return /DOM inspection failed|Cannot read properties of null.*scrollWidth|documentElement.*scrollWidth|Execution context was destroyed|Cannot find context with specified id|Target closed|Cannot access contents of url/i.test(message);
+}
+
+function transactionFinalActionOverride(input: {
+  task: string;
+  intent: string;
+  observation: PageObservation;
+  actions: QaRunAction[];
+  plannedAction: AgentAction;
+}): { action: StructuredAction; target: ObservedElement; message: string } | null {
+  if (input.intent !== 'TRANSACTION_OR_CART' || hasSuccessfulAddAction(input.actions)) return null;
+  const candidate = findBestFinalActionCandidate({
+    task: input.task,
+    intent: 'TRANSACTION_OR_CART',
+    observation: input.observation,
+    actions: input.actions
+  });
+  if (!candidate) return null;
+
+  const plannedTarget = findTarget(input.plannedAction, input.observation);
+  if (
+    isStructuredAction(input.plannedAction) &&
+    input.plannedAction.action === 'click' &&
+    (input.plannedAction.targetId === candidate.id || classifyPlannedTransactionAction(input.plannedAction, plannedTarget) === 'ADD_ACTION')
+  ) {
+    return null;
+  }
+
+  const planned = describeAction(input.plannedAction, plannedTarget);
+  const label = candidate.description || candidate.text || candidate.value || candidate.selector || candidate.id;
+  return {
+    action: {
+      action: 'click',
+      targetId: candidate.id,
+      confidence: 0.99,
+      reason: `Enabled final/forward transaction action "${label}" is available; use it before scrolling or opening the cart view.`,
+      description: `click ${candidate.id} "${label}"`
+    },
+    target: candidate,
+    message: `Planner chose "${planned}", but enabled final transaction CTA "${label}" was available. Overriding to click it to avoid a no-progress loop.`
+  };
 }
 
 function decideExecutorSwitch(input: {
@@ -1174,12 +1234,36 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'done', parsed.thought);
     onStep({ instruction: `Plan next QA action (${stepNum}/${maxSteps})`, status: 'done', result: parsed.thought });
 
-    const action = parsed.activePhase;
-    const initialTarget = findTarget(action, observation);
-    const actionDescription = describeAction(action, initialTarget);
-    const actionPlanningText = isStructuredAction(action) ? structuredActionText(action, initialTarget) : `${action.action} ${'reason' in action ? action.reason || '' : ''}`;
+    let action = parsed.activePhase;
+    let initialTarget = findTarget(action, observation);
+    let actionDescription = describeAction(action, initialTarget);
+    let finalActionOverrideApplied = false;
 
-    if (parsed.report || action.action === 'finish_task' || action.action === 'fail_task') {
+    const finalActionOverride = transactionFinalActionOverride({
+      task: prompt,
+      intent: testPlan.taskIntent,
+      observation,
+      actions: qaActions,
+      plannedAction: action
+    });
+    if (finalActionOverride) {
+      history.push({
+        thought: parsed?.thought,
+        step: stepNum,
+        action: 'deterministic_final_cta_override',
+        targetId: finalActionOverride.target.id,
+        targetDescription: finalActionOverride.target.description,
+        status: 'success',
+        result: finalActionOverride.message,
+        url: currentUrl
+      });
+      action = finalActionOverride.action;
+      initialTarget = finalActionOverride.target;
+      actionDescription = describeAction(action, initialTarget);
+      finalActionOverrideApplied = true;
+    }
+
+    if (!finalActionOverrideApplied && (parsed.report || action.action === 'finish_task' || action.action === 'fail_task')) {
       const report = parsed.report || makeReport({
         result: action.action === 'finish_task' ? 'PASS' : 'AGENT_FAILED',
         scenario: prompt,
@@ -1295,7 +1379,19 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     if (testPlan.taskIntent === 'TRANSACTION_OR_CART' &&
       action.action === 'click' &&
-      classifyTransactionLabel(actionPlanningText) === 'CART_VIEW' &&
+      classifyPlannedTransactionAction(action, initialTarget) === 'CART_VIEW' &&
+      !hasSuccessfulAddAction(qaActions) &&
+      objectiveProgress.next_unresolved_section?.candidate_actions.length) {
+      const result = `Blocked cart/bag view before prerequisites: resolve "${objectiveProgress.next_unresolved_section.section_label}" before checking the cart.`;
+      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, targetId: action.targetId, status: 'blocked', result, url: currentUrl });
+      lastActionResult = result;
+      resetDirective = `Do not open cart/bag yet. Resolve the visible required section "${objectiveProgress.next_unresolved_section.section_label}" first.`;
+      continue;
+    }
+
+    if (testPlan.taskIntent === 'TRANSACTION_OR_CART' &&
+      action.action === 'click' &&
+      classifyPlannedTransactionAction(action, initialTarget) === 'CART_VIEW' &&
       !hasSuccessfulAddAction(qaActions) &&
       cartViewClicksBeforeAdd(qaActions) >= 1) {
       const result = 'Blocked repeated cart/bag view click before any add-to-cart/add-to-bag action was executed.';
@@ -1402,7 +1498,34 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     onStep({ instruction: actionDescription, status: 'running' });
 
     const beforeActionObservation = observation;
-    const result = await executor.execute(executableAction, target);
+    let result = await executor.execute(executableAction, target);
+
+    if (
+      !result.ok &&
+      ['click', 'navigate', 'press_key', 'batch'].includes(action.action) &&
+      isTransientPostActionObservationError(result.message)
+    ) {
+      const originalMessage = result.message;
+      addStep('Recover after transient post-action observation failure', 'running');
+      onStep({ instruction: 'Recover after transient post-action observation failure', status: 'running' });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const recovered = await executor.observe();
+      if (recovered.ok && !isEmptyObservation(recovered.observation)) {
+        result = {
+          ...recovered,
+          ok: true,
+          status: 'success',
+          actionResult: `Action executed; recovered page observation after transient DOM read failure.`,
+          message: `Action executed; recovered page observation after transient DOM read failure. Original observation error: ${originalMessage}`,
+          executor: result.executor
+        };
+        addStep('Recover after transient post-action observation failure', 'done', 'Recovered current page observation.');
+        onStep({ instruction: 'Recover after transient post-action observation failure', status: 'done', result: 'Recovered current page observation.' });
+      } else {
+        addStep('Recover after transient post-action observation failure', 'failed', undefined, recovered.message);
+        onStep({ instruction: 'Recover after transient post-action observation failure', status: 'failed', error: recovered.message });
+      }
+    }
 
     const parsedObservation = result.observation;
     if (parsedObservation.page.url || parsedObservation.availableElements.length || parsedObservation.pageText) {

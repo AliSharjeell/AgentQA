@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildVerificationScript, safeJsonForInjectedJs, validateInjectedScript } from './harness';
+import { buildObservationScript, buildVerificationScript, safeJsonForInjectedJs, validateInjectedScript } from './harness';
 
 describe('buildVerificationScript', () => {
   it('serializes the field registry into the injected verifier script without template placeholders', () => {
@@ -26,5 +26,11 @@ describe('buildVerificationScript', () => {
     expect(() => validateInjectedScript('(() => { const x = ${bad}; })()', 'unit-placeholder')).toThrow(
       /uninterpolated template placeholder/
     );
+  });
+
+  it('does not classify low-opacity option cards as disabled from opacity alone', () => {
+    const script = buildObservationScript('https://example.test', false);
+
+    expect(script).not.toContain('parseFloat(style.opacity) < 0.4');
   });
 });
