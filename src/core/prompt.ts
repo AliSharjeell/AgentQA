@@ -22,7 +22,9 @@ export interface AgentHistoryEntry {
   result: string;
   url: string;
   thought?: string;
+  pageSummary?: string;
 }
+
 
 export interface PromptInput {
   taskName: string;
@@ -106,7 +108,8 @@ function summarizeHistory(history: AgentHistoryEntry[]): string {
       const target = entry.targetId ? ` ${entry.targetId}` : '';
       const value = entry.value ? ` value="${entry.value.slice(0, 80)}"` : '';
       const thoughtStr = entry.thought ? `\n   Reasoning: ${entry.thought}` : '';
-      return `${entry.step}. ${entry.action}${target}${value} -> ${entry.status}: ${entry.result}${thoughtStr}`;
+      const summaryStr = entry.pageSummary ? `\n   Page Context: ${entry.pageSummary}` : '';
+      return `${entry.step}. ${entry.action}${target}${value} -> ${entry.status}: ${entry.result}${thoughtStr}${summaryStr}`;
     })
     .join('\n') || 'None';
 }
@@ -254,6 +257,7 @@ Important:
 Return exactly this JSON shape:
 {
   "thought": "Short reasoning for the next action.",
+  "pageSummary": "Very brief summary of what you currently see on the screen (e.g. Shopping cart with 1 item, or specific product page).",
   "plan": [
     { "step": 1, "description": "Open relevant page", "status": "DONE" },
     { "step": 2, "description": "Current work", "status": "CURRENT" }

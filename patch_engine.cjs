@@ -1,33 +1,23 @@
 const fs = require('fs');
 let code = fs.readFileSync('src/core/engine.ts', 'utf8');
 
-const loopStartIdx = code.indexOf('for (let stepNum = 1; stepNum <= maxSteps; stepNum++) {');
-const beforeLoop = code.slice(0, loopStartIdx);
-let inLoop = code.slice(loopStartIdx);
+// 1. Add pageSummary?: string to AgentResponse
+code = code.replace(
+  /interface AgentResponse \{\s*thought: string;/g,
+  "interface AgentResponse {\n  thought: string;\n  pageSummary?: string;"
+);
 
-inLoop = inLoop.replace(/history\.push\(\{/g, 'history.push({ thought: parsed?.thought,');
+// 2. Add pageSummary: parsed?.pageSummary to all history.push calls that have thought: parsed?.thought
+code = code.replace(
+  /thought:\s*parsed\?\.thought/g,
+  "thought: parsed?.thought, pageSummary: parsed?.pageSummary"
+);
 
-const summaryLogic = `
-    const estimatedHistoryChars = JSON.stringify(history).length;
-    if (estimatedHistoryChars > 80000 && history.length > 5) {
-      addStep('Compressing history context...', 'running');
-      onStep({ instruction: 'Compressing history context...', status: 'running' });
-      try {
-        const summaryPrompt = \`You are a QA Agent context compressor.\\nYour task is to summarize the following history of QA actions and reasoning into a concise but highly detailed sequence.\\nRetain the critical logic, step numbers, and state changes, but compress the text.\\nHistory to summarize:\\n\${JSON.stringify(history)}\`;
-        const summaryText = await callForScript(settings, summaryPrompt, { phase: 'planning' });
-        history.splice(0, history.length, { step: 0, action: 'history_summary', status: 'success', result: summaryText, url: currentUrl });
-        addStep('History compressed', 'done');
-        onStep({ instruction: 'History compressed', status: 'done' });
-      } catch (e) {
-        addStep('History compression failed, truncating...', 'done');
-        const truncated = history.slice(-5);
-        history.splice(0, history.length, ...truncated);
-      }
-    }
+// Also handle the one `thought: parsed.thought || '',` around line 165
+code = code.replace(
+  /thought:\s*parsed\.thought \|\| '',/g,
+  "thought: parsed.thought || '', pageSummary: parsed.pageSummary,"
+);
 
-    addStep(\``;
-
-inLoop = inLoop.replace('    addStep(`Plan next QA action', summaryLogic + 'Plan next QA action');
-
-code = beforeLoop + inLoop;
 fs.writeFileSync('src/core/engine.ts', code);
+console.log('Patched engine.ts successfully.');

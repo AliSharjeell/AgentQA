@@ -69,6 +69,7 @@ type AgentAction = StructuredAction | ({ action: FinishAction; reason?: string; 
 
 interface AgentResponse {
   thought: string;
+  pageSummary?: string;
   plan: AgentPlanStep[];
   activePhase: AgentAction;
   faults?: QaFault[];
@@ -162,7 +163,7 @@ function parseAgentResponse(raw: string): AgentResponse {
     throw new Error(`Agent response missing activePhase.action: ${json}`);
   }
   return {
-    thought: parsed.thought || '',
+    thought: parsed.thought || '', pageSummary: parsed.pageSummary,
     plan: Array.isArray(parsed.plan) ? parsed.plan : [],
     activePhase,
     faults: Array.isArray(parsed.faults) ? parsed.faults : [],
@@ -1180,7 +1181,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'failed', undefined, message);
         onStep({ instruction: `Plan next QA action (${stepNum}/${maxSteps})`, status: 'failed', error: message });
       }
-      history.push({ thought: parsed?.thought,
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary,
         step: stepNum,
         action: 'parse_agent_response',
         status: 'failed',
@@ -1248,7 +1249,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     });
     if (finalActionOverride) {
       history.push({
-        thought: parsed?.thought,
+        thought: parsed?.thought, pageSummary: parsed?.pageSummary,
         step: stepNum,
         action: 'deterministic_final_cta_override',
         targetId: finalActionOverride.target.id,
@@ -1277,7 +1278,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       const coveredObjectives = objectiveCoverageCount(parsed.report, parsed.plan);
       if (report.result === 'PASS' && numberedObjectiveCount > 0 && coveredObjectives < numberedObjectiveCount) {
         const result = `Blocked premature PASS: only ${coveredObjectives} checklist items were marked complete/reported for ${numberedObjectiveCount} numbered objectives.`;
-        history.push({ thought: parsed?.thought, step: stepNum, action: action.action, status: 'blocked', result, url: currentUrl });
+        history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'blocked', result, url: currentUrl });
         lastActionResult = result;
         resetDirective = `You attempted to finish early. The original task has ${numberedObjectiveCount} numbered objectives. Continue from the current page and complete/verify every remaining objective before PASS.`;
         continue;
@@ -1298,7 +1299,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       });
       const previousKind = executor.kind;
       if (!decision.approved || !decision.target) {
-        history.push({ thought: parsed?.thought, step: stepNum, action: action.action, value: action.value || '', status: 'blocked', result: decision.message, url: currentUrl });
+        history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, value: action.value || '', status: 'blocked', result: decision.message, url: currentUrl });
         lastActionResult = decision.message;
         resetDirective = `Executor switch was denied by policy. Continue with ${executor.kind}, choose a different safe action, or fail with evidence.`;
         continue;
@@ -1323,7 +1324,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       const result = switchedObservation.ok
         ? `${decision.message} Re-observed current page with ${decision.target}.`
         : `${decision.message} Re-observe failed after switch: ${switchedObservation.message}`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, value: `${previousKind}->${decision.target}`, status: switchedObservation.ok ? 'success' : 'failed', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, value: `${previousKind}->${decision.target}`, status: switchedObservation.ok ? 'success' : 'failed', result, url: currentUrl });
       lastActionResult = result;
       resetDirective = null;
       continue;
@@ -1331,7 +1332,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     if (!isStructuredAction(action)) {
       const result = `Unsupported terminal action without report: ${action.action}`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, status: 'failed', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, status: 'failed', result, url: currentUrl });
       lastActionResult = result;
       continue;
     }
@@ -1371,7 +1372,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     if (objectiveProgress.final_cta_search_gated && action.action === 'scroll' && objectiveProgress.next_unresolved_section?.candidate_actions.length) {
       const result = `Blocked blind final-CTA search: resolve "${objectiveProgress.next_unresolved_section.section_label}" before scrolling to hunt for the final button.`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, value: String(action.dy ?? ''), status: 'blocked', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, value: String(action.dy ?? ''), status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       resetDirective = `Do not scroll to search for the final CTA yet. Resolve the visible required section "${objectiveProgress.next_unresolved_section.section_label}" using one of its candidate actions first.`;
       continue;
@@ -1383,7 +1384,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       !hasSuccessfulAddAction(qaActions) &&
       objectiveProgress.next_unresolved_section?.candidate_actions.length) {
       const result = `Blocked cart/bag view before prerequisites: resolve "${objectiveProgress.next_unresolved_section.section_label}" before checking the cart.`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, targetId: action.targetId, status: 'blocked', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, targetId: action.targetId, status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       resetDirective = `Do not open cart/bag yet. Resolve the visible required section "${objectiveProgress.next_unresolved_section.section_label}" first.`;
       continue;
@@ -1395,7 +1396,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       !hasSuccessfulAddAction(qaActions) &&
       cartViewClicksBeforeAdd(qaActions) >= 1) {
       const result = 'Blocked repeated cart/bag view click before any add-to-cart/add-to-bag action was executed.';
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, targetId: action.targetId, status: 'blocked', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, targetId: action.targetId, status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       resetDirective = 'Do not open cart/bag again until an add action has been executed. Resolve prerequisites or find the real add action.';
       continue;
@@ -1403,7 +1404,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     if (isRestartNavigation(action, targetUrl, history)) {
       const result = `Blocked restart navigation to ${action.action === 'navigate' ? action.url : 'target URL inside batch'}`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, value: action.action === 'navigate' ? action.url : actionSignature(action), status: 'blocked', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, value: action.action === 'navigate' ? action.url : actionSignature(action), status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       blockedActionSignature = actionSignature(action);
       resetDirective = `You attempted to restart the flow by navigating to the target URL. Do not restart. Continue from the current page state or fail with evidence.`;
@@ -1415,7 +1416,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     if (action.action === 'scroll' && scrollStreak >= maxNoProgressScrolls) {
       blockedScrollAttempts++;
       const result = `Blocked scroll loop: already scrolled ${scrollStreak} times without observable page progress.`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, value: String(action.dy ?? ''), status: 'blocked', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, value: String(action.dy ?? ''), status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       resetDirective = `Stop scrolling until you choose a different tactic. Use the current observation to click a visible control, resolve a prerequisite, read/verify state, or fail with evidence. Do not restart from the beginning.`;
       if (blockedScrollAttempts >= 2) {
@@ -1436,7 +1437,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     if (blockedActionSignature && signature === blockedActionSignature) {
       const result = `Blocked repeated action: ${signature}`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, targetId: 'targetId' in action ? action.targetId : undefined, status: 'blocked', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, targetId: 'targetId' in action ? action.targetId : undefined, status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       resetDirective = `The previous action was explicitly forbidden because it caused a loop. Choose a different tactic or fail with evidence.`;
       continue;
@@ -1449,7 +1450,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       blockedActionSignature = signature;
       resetDirective = `You repeated "${actionDescription}" three times. That exact action is now blocked. Choose a different visible element, scroll, read state, wait, navigate forward only when justified, or fail with evidence.`;
       const result = `Loop trap detected for action: ${actionDescription}`;
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, targetId: 'targetId' in action ? action.targetId : undefined, status: 'blocked', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, targetId: 'targetId' in action ? action.targetId : undefined, status: 'blocked', result, url: currentUrl });
       lastActionResult = result;
       if (trapCount >= 2) {
         const report = makeReport({
@@ -1471,7 +1472,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     if (resolved.error || !resolved.action) {
       const result = resolved.error || 'Action could not be resolved against the current DOM observation.';
       const rootCause = rootCauseForActionResolutionError(result);
-      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, targetId: action.targetId, status: 'failed', result, url: currentUrl });
+      history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary, step: stepNum, action: action.action, targetId: action.targetId, status: 'failed', result, url: currentUrl });
       qaActions.push({
         action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
         action: action.action,
@@ -1580,7 +1581,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       actionScreenshot = await evidenceCollector.captureScreenshot(executor, `${actionId}_after_${action.action}.png`);
     }
 
-    history.push({ thought: parsed?.thought,
+    history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary,
       step: stepNum,
       action: action.action,
       targetId: action.targetId,
@@ -1660,7 +1661,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         actions: qaActions
       });
       if (completion.passed && testPlan.taskIntent !== 'FORM_INTERACTION') {
-        history.push({ thought: parsed?.thought,
+        history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary,
           step: stepNum,
           action: 'deterministic_completion',
           status: 'success',
@@ -1689,7 +1690,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         });
         if (allFieldsHaveValues && globalFieldRegistry.length >= 5) {
           // All form fields have been filled - skip further planning and go to verification
-          history.push({ thought: parsed?.thought,
+          history.push({ thought: parsed?.thought, pageSummary: parsed?.pageSummary,
             step: stepNum,
             action: 'deterministic_completion',
             status: 'success',
