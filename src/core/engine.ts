@@ -20,7 +20,12 @@ import { runValidatorAudit } from './validator';
 import { detectGoalCompletion, elementRegistryForObservation, resolveInitialObservationReadiness } from './intent';
 import {
   buildCompactFinalState,
+  buildObjectiveProgress,
+  cartViewClicksBeforeAdd,
+  classifyTransactionLabel,
   compactObservationForReport,
+  hasSuccessfulAddAction,
+  isEmptyObservation,
   relevantFieldsForVerification,
   repeatedCartViewNoProgress
 } from './state';
@@ -475,6 +480,20 @@ function scrollMadeProgress(before: PageObservation, after: PageObservation): bo
   return after.pageText.length > before.pageText.length + 120;
 }
 
+function structuredActionText(action: StructuredAction, target: ObservedElement | null): string {
+  return [
+    action.action,
+    action.targetId,
+    action.description,
+    action.reason,
+    action.value,
+    action.key,
+    target?.description,
+    target?.text,
+    target?.selector
+  ].filter(Boolean).join(' ');
+}
+
 function decideExecutorSwitch(input: {
   mode: AgentRunMode;
   allowEscalation: boolean;
@@ -613,6 +632,50 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
         }
       }
     }
+  };
+
+  const applyObservedState = (nextObservation: PageObservation, step: string): void => {
+    observation = nextObservation;
+    rememberObservation(observation);
+    currentUrl = observation.page.url || currentUrl;
+    faults = addConsoleFaults(faults, observation, step);
+  };
+
+  const waitAndReobserveIfEmpty = async (reason: string, stepNum: number): Promise<'not_empty' | 'recovered' | 'empty'> => {
+    if (!executor || !isEmptyObservation(observation)) return 'not_empty';
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const instruction = `Wait and re-observe (${reason}, attempt ${attempt}/3)`;
+      addStep(instruction, 'running');
+      onStep({ instruction, status: 'running' });
+      try {
+        const waitResult = await executor.execute({ action: 'wait', seconds: 1, description: instruction }, null);
+        applyObservedState(waitResult.observation, instruction);
+        const status = isEmptyObservation(observation) ? 'empty observation remains' : 'page content observed';
+        history.push({
+          step: stepNum,
+          action: 'wait_reobserve',
+          value: reason,
+          status: waitResult.ok ? 'success' : 'failed',
+          result: `${waitResult.message || 'Waited and re-observed'} (${status})`,
+          url: currentUrl
+        });
+        addStep(instruction, waitResult.ok ? 'done' : 'failed', status, waitResult.ok ? undefined : waitResult.message);
+        onStep({ instruction, status: waitResult.ok ? 'done' : 'failed', result: status, error: waitResult.ok ? undefined : waitResult.message });
+        if (!isEmptyObservation(observation)) {
+          lastActionResult = `Recovered from empty observation after ${attempt} wait/reobserve attempt(s).`;
+          return 'recovered';
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        history.push({ step: stepNum, action: 'wait_reobserve', value: reason, status: 'failed', result: message, url: currentUrl });
+        addStep(instruction, 'failed', undefined, message);
+        onStep({ instruction, status: 'failed', error: message });
+      }
+    }
+
+    lastActionResult = `Observation remained empty after retrying: ${reason}`;
+    return 'empty';
   };
 
   const finishWithReport = async (legacyReport: CliReport, summary: string, url: string): Promise<TaskResult> => {
@@ -863,8 +926,43 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     return finishWithReport({ ...report, result: 'INFRA_FAILED' }, 'Initial browser observation failed.', targetUrl);
   }
 
-  observation = initial.observation;
-  rememberObservation(observation);
+  applyObservedState(initial.observation, 'initial observation');
+  const initialEmptyStatus = await waitAndReobserveIfEmpty('EMPTY_OBSERVATION_AFTER_NAVIGATION', 0);
+  if (initialEmptyStatus === 'empty') {
+    const summary = 'The page observation stayed empty after navigation and three wait/re-observe attempts.';
+    qaActions.push({
+      action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
+      action: 'observe',
+      target: 'initial page',
+      action_result: 'BLOCKED',
+      verification: {
+        expected: 'Page text or interactive elements after navigation',
+        actual: summary,
+        status: 'BLOCKED',
+        rootCause: 'PAGE_OBSERVATION_EMPTY',
+        message: summary
+      },
+      timestamp: new Date().toISOString()
+    });
+    const report = makeReport({
+      result: 'AGENT_FAILED',
+      scenario: prompt,
+      summary,
+      finalUrl: currentUrl,
+      history,
+      faults: [{
+        severity: 'critical',
+        type: 'agent_issue',
+        title: 'Page observation empty after navigation',
+        details: summary,
+        evidence: [],
+        url: currentUrl,
+        step: 'initial observation'
+      }],
+      evidence: []
+    });
+    return finishWithReport(report, summary, currentUrl);
+  }
 
   const readiness = resolveInitialObservationReadiness(prompt, observation);
   if (readiness.status === 'blocked') {
@@ -905,7 +1003,6 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
   }
 
   currentUrl = observation.page.url || targetUrl;
-  faults = addConsoleFaults(faults, observation, 'initial observation');
   lastActionResult = `Loaded ${currentUrl}`;
   domBeforePath = evidenceCollector.saveDomSnapshot('dom-before.json', observation);
   const initialScreenshot = await evidenceCollector.captureScreenshot(executor, '00_initial_page.png', { required: true });
@@ -964,6 +1061,13 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     addStep(`Plan next QA action (${stepNum}/${maxSteps})`, 'running');
     onStep({ instruction: `Plan next QA action (${stepNum}/${maxSteps})`, status: 'running' });
 
+    const objectiveProgress = buildObjectiveProgress({
+      task: prompt,
+      intent: testPlan.taskIntent,
+      observation,
+      actions: qaActions,
+      history
+    });
     const fullPrompt = buildPrompt({
       taskName: prompt,
       targetUrl,
@@ -978,7 +1082,8 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       visionMode: options.visionMode,
       mode,
       currentExecutor: executor.kind,
-      allowEscalation
+      allowEscalation,
+      objectiveProgress
     });
 
     let parsed: AgentResponse | undefined;
@@ -1072,6 +1177,7 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
     const action = parsed.activePhase;
     const initialTarget = findTarget(action, observation);
     const actionDescription = describeAction(action, initialTarget);
+    const actionPlanningText = isStructuredAction(action) ? structuredActionText(action, initialTarget) : `${action.action} ${'reason' in action ? action.reason || '' : ''}`;
 
     if (parsed.report || action.action === 'finish_task' || action.action === 'fail_task') {
       const report = parsed.report || makeReport({
@@ -1143,6 +1249,59 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
       const result = `Unsupported terminal action without report: ${action.action}`;
       history.push({ thought: parsed?.thought, step: stepNum, action: action.action, status: 'failed', result, url: currentUrl });
       lastActionResult = result;
+      continue;
+    }
+
+    if (isEmptyObservation(observation)) {
+      const emptyStatus = await waitAndReobserveIfEmpty('EMPTY_OBSERVATION_BEFORE_ACTION', stepNum);
+      if (emptyStatus === 'empty') {
+        const result = 'Observation remained empty after wait/re-observe retries; no safe browser action can be chosen.';
+        qaActions.push({
+          action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
+          action: 'observe',
+          action_result: 'BLOCKED',
+          verification: {
+            expected: 'Non-empty page observation before acting',
+            actual: result,
+            status: 'BLOCKED',
+            rootCause: 'PAGE_OBSERVATION_EMPTY',
+            message: result
+          },
+          timestamp: new Date().toISOString()
+        });
+        const report = makeReport({
+          result: 'AGENT_FAILED',
+          scenario: prompt,
+          summary: result,
+          finalUrl: currentUrl,
+          history,
+          faults,
+          evidence: [result],
+          consoleErrors: observation.consoleErrors
+        });
+        return finishWithReport(report, result, currentUrl);
+      }
+      resetDirective = 'The previous observation was empty and has been refreshed. Use the current non-empty observation; do not repeat the stale action.';
+      continue;
+    }
+
+    if (objectiveProgress.final_cta_search_gated && action.action === 'scroll' && objectiveProgress.next_unresolved_section?.candidate_actions.length) {
+      const result = `Blocked blind final-CTA search: resolve "${objectiveProgress.next_unresolved_section.section_label}" before scrolling to hunt for the final button.`;
+      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, value: String(action.dy ?? ''), status: 'blocked', result, url: currentUrl });
+      lastActionResult = result;
+      resetDirective = `Do not scroll to search for the final CTA yet. Resolve the visible required section "${objectiveProgress.next_unresolved_section.section_label}" using one of its candidate actions first.`;
+      continue;
+    }
+
+    if (testPlan.taskIntent === 'TRANSACTION_OR_CART' &&
+      action.action === 'click' &&
+      classifyTransactionLabel(actionPlanningText) === 'CART_VIEW' &&
+      !hasSuccessfulAddAction(qaActions) &&
+      cartViewClicksBeforeAdd(qaActions) >= 1) {
+      const result = 'Blocked repeated cart/bag view click before any add-to-cart/add-to-bag action was executed.';
+      history.push({ thought: parsed?.thought, step: stepNum, action: action.action, targetId: action.targetId, status: 'blocked', result, url: currentUrl });
+      lastActionResult = result;
+      resetDirective = 'Do not open cart/bag again until an add action has been executed. Resolve prerequisites or find the real add action.';
       continue;
     }
 
@@ -1247,10 +1406,39 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     const parsedObservation = result.observation;
     if (parsedObservation.page.url || parsedObservation.availableElements.length || parsedObservation.pageText) {
-      observation = parsedObservation;
-      rememberObservation(observation);
-      currentUrl = observation.page.url || currentUrl;
-      faults = addConsoleFaults(faults, observation, actionDescription);
+      applyObservedState(parsedObservation, actionDescription);
+    }
+
+    if (result.ok && isEmptyObservation(observation) && ['click', 'navigate', 'press_key', 'batch'].includes(action.action)) {
+      const emptyStatus = await waitAndReobserveIfEmpty(`EMPTY_OBSERVATION_AFTER_${action.action.toUpperCase()}`, stepNum);
+      if (emptyStatus === 'empty') {
+        const resultText = `Observation stayed empty after ${action.action}; the agent cannot safely infer the next UI state.`;
+        qaActions.push({
+          action_id: `A${String(qaActions.length + 1).padStart(3, '0')}`,
+          action: 'observe',
+          action_result: 'BLOCKED',
+          verification: {
+            expected: 'Page text or interactive elements after navigation/action',
+            actual: resultText,
+            status: 'BLOCKED',
+            rootCause: 'PAGE_OBSERVATION_EMPTY',
+            message: resultText
+          },
+          timestamp: new Date().toISOString()
+        });
+        const report = makeReport({
+          result: 'AGENT_FAILED',
+          scenario: prompt,
+          summary: resultText,
+          finalUrl: currentUrl,
+          history,
+          faults,
+          evidence: [resultText],
+          consoleErrors: observation.consoleErrors
+        });
+        return finishWithReport(report, resultText, currentUrl);
+      }
+      result.observation = observation;
     }
 
     const actionResult = result.actionResult || result.message;

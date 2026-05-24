@@ -3,6 +3,8 @@ import path from 'node:path';
 import type { AgentExecutorKind, AgentRunMode } from '../shared/types';
 import type { PageObservation, QaFault } from './harness';
 import { detectTaskIntent, elementRegistryForObservation } from './intent';
+import type { QaObjectiveProgress } from './state';
+import { buildObjectiveProgress } from './state';
 
 export interface AgentPlanStep {
   step: number;
@@ -37,6 +39,7 @@ export interface PromptInput {
   mode?: AgentRunMode;
   currentExecutor?: AgentExecutorKind;
   allowEscalation?: boolean;
+  objectiveProgress?: QaObjectiveProgress;
 }
 
 function getCoreBehaviourRules(): string {
@@ -58,7 +61,8 @@ function getCoreBehaviourRules(): string {
 6. Never claim PASS without DOM/page evidence.
 7. Only report a website bug when deterministic evidence proves the product behavior is wrong.
 8. For transaction/cart tasks, viewing a cart/bag icon or menu is not the same as adding an item. Verify an add action and final cart/bag state.
-9. If an action (like clicking a button) fails or does not advance the state, reason about missing prerequisites. Scroll up to check for unfulfilled requirements (e.g., missed required fields, unchecked terms, or missing prior steps).`;
+9. Do not jump directly to the final CTA if the page has unresolved required sections.
+10. If an action (like clicking a button) fails or does not advance the state, reason about missing prerequisites. Scroll up to check for unfulfilled requirements (e.g., missed required fields, unchecked terms, or missing prior steps).`;
 }
 
 function summarizeFields(observation: PageObservation): string {
@@ -119,8 +123,34 @@ function summarizeFaults(faults: QaFault[]): string {
     .join('\n') || 'None';
 }
 
+function summarizeObjectiveProgress(progress: QaObjectiveProgress): string {
+  const next = progress.next_unresolved_section;
+  return [
+    `Current goal: ${progress.current_goal}`,
+    `Milestones: ${JSON.stringify(progress.milestones)}`,
+    next ? `Next unresolved section: ${next.section_label}` : 'Next unresolved section: none detected',
+    next ? `Reason: ${next.reason}` : '',
+    next?.candidate_actions.length
+      ? `Candidate actions: ${next.candidate_actions.map((action) => `${action.id || ''} "${action.label}" ${action.enabled ? 'enabled' : 'disabled'}`).join('; ')}`
+      : '',
+    progress.final_cta_search_gated ? 'Final CTA search is gated: resolve the current required/prerequisite section before searching for the final CTA.' : 'Final CTA search is not currently gated.',
+    progress.clicked_elements.length ? `Already clicked/changed: ${progress.clicked_elements.join(' | ')}` : '',
+    progress.visited_scroll_positions.length ? `Visited scroll positions: ${progress.visited_scroll_positions.join(', ')}` : '',
+    progress.recent_no_progress_actions.length ? `No-progress actions: ${progress.recent_no_progress_actions.join(' | ')}` : '',
+    progress.warnings.length ? `Warnings: ${progress.warnings.join(' ')}` : '',
+    `Action priority: ${progress.action_priority.join(' -> ')}`
+  ].filter(Boolean).join('\n');
+}
+
 export function buildPrompt(input: PromptInput): string {
   const taskIntent = detectTaskIntent(input.taskName);
+  const objectiveProgress = input.objectiveProgress || buildObjectiveProgress({
+    task: input.taskName,
+    intent: taskIntent.intent,
+    observation: input.observation,
+    actions: [],
+    history: input.history
+  });
   const visionRules = input.visionMode
     ? `Vision mode is enabled. You may report visual bugs only when backed by screenshot or DOM/visual evidence available in context.`
     : `Text mode is enabled. Do not report visual-only bugs as confirmed. Add a warning if a visual check is required but unavailable.`;
@@ -146,6 +176,9 @@ ${summarizeHistory(input.history)}
 
 Known QA faults:
 ${summarizeFaults(input.faults)}
+
+Objective progress memory:
+${summarizeObjectiveProgress(objectiveProgress)}
 
 ${input.resetDirective ? `Loop reset directive:\n${input.resetDirective}\n` : ''}
 ${input.blockedActionSignature ? `Forbidden next action signature: ${input.blockedActionSignature}\n` : ''}
@@ -196,6 +229,10 @@ Important:
 - Do not restart the task from the beginning when stuck.
 - You are not limited to form fields. Use clickable links, buttons, menus, nav bars, search boxes, filters, cards, dropdowns, modals, forms, page text, and headings.
 - For each step: understand the current goal, pick the most relevant visible affordance, execute safe action(s), observe again, and stop only when the goal can be verified.
+- Do not jump directly to the final CTA if the page has unresolved required sections. Complex flows often require selecting options, answering prerequisite questions, or scrolling through sections before the final button appears.
+- Action selection priority: first resolve a visible required/unresolved section; second click a relevant next/continue/add/final CTA only when prerequisites appear resolved or the CTA is already visible; third scroll to reveal the next section only when current viewport has no useful unresolved controls; fourth open cart/bag only after add action or once for diagnostic evidence; fifth stop as blocked after no-progress evidence.
+- If no elements are detected after navigation, wait and re-observe before acting. Do not scroll from an empty observation.
+- Avoid repeating the same scroll/click without new evidence.
 - If FieldRegistry is empty but ElementRegistry has usable affordances, continue planning with ElementRegistry.
 - Only block on missing fields when the current step specifically requires an editable field.
 - Prefer a high-confidence batch for obvious forms with all required fields and submit button visible. Include "confidence": 0.90 or higher. If not that certain, use one action.
@@ -208,6 +245,7 @@ Important:
 - If an element is missing, scroll/read/wait or choose another visible element.
 - If selecting product options, choose the required base/default option from current DOM text and verify selection before add-to-cart.
 - For cart tasks, do not treat a global cart/bag icon click as an add-to-cart/add-to-bag action. It can only verify cart state.
+- Never treat a missing final CTA as a website bug until required prerequisites are resolved and deterministic verification confirms the final action is unavailable.
 - Keep a QA fault log. A failed automation action is not automatically a site bug.
 - PASS must cite exact DOM/cart evidence when the task requires exact product names or cart contents.
 - If the task cannot progress because the needed UI affordance is missing, report AGENT_FAILED with a clear REQUIRED_AFFORDANCE_NOT_FOUND reason.

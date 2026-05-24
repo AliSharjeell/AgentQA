@@ -28,6 +28,43 @@ const DEFAULT_LIMITS: CompactStateLimits = {
 
 type TransactionActionClass = 'ADD_ACTION' | 'CART_VIEW' | 'OTHER';
 
+export interface QaPlanningSection {
+  section_label: string;
+  reason: string;
+  candidate_actions: QaCompactElementState[];
+}
+
+export interface QaObjectiveProgress {
+  current_goal: string;
+  milestones: {
+    target_page_reached: boolean;
+    required_sections_seen: string[];
+    required_sections_resolved: string[];
+    final_cta_found: boolean;
+    final_cta_clicked: boolean;
+    cart_state_verified: boolean;
+  };
+  next_unresolved_section?: QaPlanningSection;
+  final_cta_search_gated: boolean;
+  recent_no_progress_actions: string[];
+  clicked_elements: string[];
+  visited_scroll_positions: number[];
+  action_priority: string[];
+  warnings: string[];
+}
+
+type HistoryLike = Array<{
+  action: string;
+  targetId?: string;
+  targetDescription?: string;
+  value?: string;
+  result: string;
+  status: string;
+}>;
+
+const REQUIRED_SECTION_RE = /\b(choose|select|required|option|model|variant|color|size|storage|plan|carrier|payment|billing|method|trade in|trade-in|protection|coverage|delivery|pickup|shipping|terms|contact|address|email|phone|name|configuration|customize|preference)\b/i;
+const FINAL_ACTION_RE = /\b(add to cart|add to bag|add to basket|add item|add product|submit|checkout|save|apply|continue|create account|book|reserve|send|buy|purchase|place order)\b/i;
+
 function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -38,6 +75,15 @@ function flattenActions(actions: QaRunAction[]): QaRunAction[] {
 
 function actionText(action: QaRunAction): string {
   return normalize(`${action.action} ${action.target || ''} ${action.label || ''} ${action.selector || ''} ${String(action.input ?? '')}`);
+}
+
+export function isEmptyObservation(observation: PageObservation): boolean {
+  return (observation.pageText || '').trim().length < 50 && elementRegistryForObservation(observation).length === 0;
+}
+
+export function hasFinalActionGoal(task: string, intent: QaTaskIntent): boolean {
+  if (['TRANSACTION_OR_CART', 'AUTH_FLOW', 'SETTINGS_CHANGE', 'FORM_INTERACTION'].includes(intent)) return true;
+  return FINAL_ACTION_RE.test(task);
 }
 
 export function classifyTransactionLabel(label: string): TransactionActionClass {
@@ -56,6 +102,22 @@ export function classifyTransactionLabel(label: string): TransactionActionClass 
 
 export function classifyTransactionAction(action: QaRunAction): TransactionActionClass {
   return classifyTransactionLabel(actionText(action));
+}
+
+export function hasSuccessfulAddAction(actions: QaRunAction[]): boolean {
+  return flattenActions(actions).some((action) => action.action_result === 'SUCCESS' && classifyTransactionAction(action) === 'ADD_ACTION');
+}
+
+export function cartViewClicksBeforeAdd(actions: QaRunAction[]): number {
+  let addSeen = false;
+  let count = 0;
+  for (const action of flattenActions(actions)) {
+    if (action.action_result !== 'SUCCESS') continue;
+    const kind = classifyTransactionAction(action);
+    if (kind === 'ADD_ACTION') addSeen = true;
+    if (!addSeen && kind === 'CART_VIEW') count++;
+  }
+  return count;
 }
 
 function taskTerms(task: string): string[] {
@@ -91,6 +153,97 @@ function compactElement(element: ObservedElement, maxText: number): QaCompactEle
     enabled: !element.disabled,
     bbox: { x: element.x, y: element.y },
     text: truncateText(element.text || element.value || '', maxText)
+  };
+}
+
+function isFinalActionElement(element: ObservedElement): boolean {
+  const text = elementText(element);
+  return classifyTransactionLabel(text) === 'ADD_ACTION' || FINAL_ACTION_RE.test(text);
+}
+
+function isOptionLikeElement(element: ObservedElement): boolean {
+  const role = (element.role || '').toLowerCase();
+  const type = (element.type || '').toLowerCase();
+  const tag = (element.tag || '').toLowerCase();
+  if (['radio', 'checkbox', 'select', 'combobox', 'option', 'card', 'dropdown', 'menuitem', 'tab'].includes(type)) return true;
+  if (['radio', 'checkbox', 'option', 'menuitemradio', 'menuitemcheckbox'].includes(role)) return true;
+  if (tag === 'select' || tag === 'label') return true;
+  return type === 'button' && REQUIRED_SECTION_RE.test(elementText(element));
+}
+
+function touchedActionLabels(actions: QaRunAction[]): Set<string> {
+  return new Set(flattenActions(actions)
+    .filter((action) => action.action_result === 'SUCCESS')
+    .flatMap((action) => [action.selector, action.target, action.label, action.temporary_observation_id])
+    .filter((item): item is string => Boolean(item))
+    .map(normalize));
+}
+
+function elementWasTouched(element: ObservedElement, touched: Set<string>): boolean {
+  return [element.selector, element.description, element.id, element.text]
+    .filter((item): item is string => Boolean(item))
+    .some((item) => touched.has(normalize(item)));
+}
+
+function optionGroupLabel(element: ObservedElement): string {
+  const text = truncateText(element.description || element.text || element.value || element.selector || 'Required section', 80);
+  const match = text.match(REQUIRED_SECTION_RE);
+  if (match) {
+    const start = Math.max(0, match.index ?? 0);
+    return truncateText(text.slice(start).trim() || text, 80);
+  }
+  return text;
+}
+
+export function findNextUnresolvedSection(input: {
+  task: string;
+  intent: QaTaskIntent;
+  observation: PageObservation;
+  actions: QaRunAction[];
+}): QaPlanningSection | null {
+  if (!hasFinalActionGoal(input.task, input.intent)) return null;
+  const touched = touchedActionLabels(input.actions);
+  const selectedText = new Set([
+    ...(input.observation.fieldRegistry || [])
+      .filter((field) => field.checked || field.selected_value || field.value)
+      .map((field) => normalize(`${field.label} ${field.selected_label || field.selected_value || field.value || field.checked}`)),
+    ...elementRegistryForObservation(input.observation)
+      .filter((element) => element.selected || element.checked)
+      .map((element) => normalize(element.description || element.text || element.selector))
+  ]);
+
+  const candidates = elementRegistryForObservation(input.observation)
+    .filter((element) => element.visible !== false)
+    .filter((element) => !isFinalActionElement(element))
+    .filter((element) => isOptionLikeElement(element) || REQUIRED_SECTION_RE.test(elementText(element)))
+    .filter((element) => !element.selected && !element.checked)
+    .filter((element) => !elementWasTouched(element, touched))
+    .map((element) => {
+      const text = elementText(element);
+      const sectionLabel = optionGroupLabel(element);
+      const groupResolved = Array.from(selectedText).some((selected) =>
+        selected && (selected.includes(normalize(sectionLabel)) || normalize(sectionLabel).includes(selected))
+      );
+      const score = (REQUIRED_SECTION_RE.test(text) ? 10 : 2) +
+        (isOptionLikeElement(element) ? 6 : 0) +
+        (element.disabled ? -3 : 0) +
+        scoreText(text, taskTerms(input.task), input.intent);
+      return { element, sectionLabel, groupResolved, score };
+    })
+    .filter((item) => !item.groupResolved)
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates[0];
+  if (!best) return null;
+  const related = candidates
+    .filter((item) => normalize(item.sectionLabel) === normalize(best.sectionLabel) || item.score >= best.score - 3)
+    .slice(0, 6)
+    .map((item) => compactElement(item.element, DEFAULT_LIMITS.maxTextPerElement));
+
+  return {
+    section_label: best.sectionLabel,
+    reason: 'Visible required/prerequisite controls are available and no selected value has been confirmed for this section.',
+    candidate_actions: related
   };
 }
 
@@ -314,4 +467,82 @@ export function transactionMilestones(input: {
 export function repeatedCartViewNoProgress(actions: QaRunAction[], threshold = 3): boolean {
   const tail = flattenActions(actions).filter((action) => action.action_result === 'SUCCESS').slice(-threshold);
   return tail.length >= threshold && tail.every((action) => classifyTransactionAction(action) === 'CART_VIEW');
+}
+
+export function buildObjectiveProgress(input: {
+  task: string;
+  intent: QaTaskIntent;
+  observation: PageObservation;
+  actions: QaRunAction[];
+  history?: HistoryLike;
+}): QaObjectiveProgress {
+  const compact = buildCompactFinalState({
+    task: input.task,
+    intent: input.intent,
+    observation: input.observation,
+    actions: input.actions,
+    limits: { maxVerifierElements: 40, maxPageText: 1200 }
+  });
+  const nextSection = findNextUnresolvedSection(input);
+  const finalCtaFound = compact.candidateActions.some((element) => classifyTransactionLabel(`${element.label} ${element.text || ''}`) === 'ADD_ACTION' || FINAL_ACTION_RE.test(`${element.label} ${element.text || ''}`));
+  const finalCtaClicked = hasSuccessfulAddAction(input.actions) ||
+    flattenActions(input.actions).some((action) => action.action_result === 'SUCCESS' && FINAL_ACTION_RE.test(actionText(action)));
+  const milestones = input.intent === 'TRANSACTION_OR_CART'
+    ? transactionMilestones({ task: input.task, observation: input.observation, actions: input.actions, compactState: compact })
+    : [];
+  const cartStateVerified = milestones.some((milestone) => milestone.id === 'M6_CART_OR_BAG_VERIFIED' && milestone.status === 'PASS');
+  const clickedElements = flattenActions(input.actions)
+    .filter((action) => action.action_result === 'SUCCESS' && ['click', 'select', 'check', 'radio', 'fill', 'type'].includes(action.action))
+    .map((action) => action.target || action.label || action.selector || action.action)
+    .filter(Boolean)
+    .slice(-10);
+  const visitedScrollPositions = [
+    input.observation.page.sy,
+    ...(input.history || [])
+      .filter((entry) => entry.action === 'scroll')
+      .map((entry) => {
+        const match = `${entry.result} ${entry.value || ''}`.match(/\by=(\d+)\b|^\s*(-?\d+)\s*$/);
+        return match ? Number(match[1] || match[2]) : undefined;
+      })
+  ].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const noProgress = (input.history || [])
+    .filter((entry) => entry.status === 'blocked' || /no progress|loop|repeated|blocked scroll/i.test(entry.result))
+    .map((entry) => `${entry.action}: ${truncateText(entry.result, 120)}`)
+    .slice(-5);
+  const requiredResolved = compact.selectedOptions;
+  const finalCtaSearchGated = hasFinalActionGoal(input.task, input.intent) && Boolean(nextSection) && !finalCtaFound;
+  const warnings: string[] = [];
+  if (isEmptyObservation(input.observation)) warnings.push('Observation is empty; wait and re-observe before any scroll/click.');
+  if (finalCtaSearchGated) warnings.push('Do not scroll/search for the final CTA until the visible unresolved section is handled.');
+  if (input.intent === 'TRANSACTION_OR_CART' && cartViewClicksBeforeAdd(input.actions) > 0 && !hasSuccessfulAddAction(input.actions)) {
+    warnings.push('Cart/bag view was opened before an add action; do not repeat it until an add action occurs.');
+  }
+
+  const actionPriority = [
+    isEmptyObservation(input.observation) ? 'Wait 1s and re-observe; do not scroll from an empty observation.' : '',
+    nextSection ? `Resolve visible required section: ${nextSection.section_label}.` : '',
+    !nextSection && finalCtaFound ? 'Click the relevant final CTA if it matches the goal.' : '',
+    !nextSection && !finalCtaFound ? 'Scroll only to reveal the next section or final CTA, then re-observe.' : '',
+    input.intent === 'TRANSACTION_OR_CART' ? 'Open cart/bag only after an add action was executed, or once for diagnostic evidence.' : '',
+    'Stop as blocked only after no-progress evidence and deterministic final-state checks.'
+  ].filter(Boolean);
+
+  return {
+    current_goal: input.task,
+    milestones: {
+      target_page_reached: Boolean(input.observation.page.url || input.observation.page.title || compact.pageTextExcerpt),
+      required_sections_seen: nextSection ? [nextSection.section_label] : [],
+      required_sections_resolved: requiredResolved,
+      final_cta_found: finalCtaFound,
+      final_cta_clicked: finalCtaClicked,
+      cart_state_verified: cartStateVerified
+    },
+    next_unresolved_section: nextSection || undefined,
+    final_cta_search_gated: finalCtaSearchGated,
+    recent_no_progress_actions: noProgress,
+    clicked_elements: clickedElements,
+    visited_scroll_positions: [...new Set(visitedScrollPositions)].slice(-8),
+    action_priority: actionPriority,
+    warnings
+  };
 }

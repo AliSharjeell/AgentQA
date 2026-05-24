@@ -7,8 +7,11 @@ import { createTestPlan } from './planner';
 import { applyVerifierRuntimeWarning, buildQaRunResult } from './reporter';
 import {
   buildCompactFinalState,
+  buildObjectiveProgress,
   classifyTransactionAction,
   classifyTransactionLabel,
+  findNextUnresolvedSection,
+  isEmptyObservation,
   relevantFieldsForVerification,
   repeatedCartViewNoProgress
 } from './state';
@@ -74,10 +77,10 @@ function observation(overrides: Partial<PageObservation> = {}): PageObservation 
     elementRegistry: elements,
     availableElements: overrides.availableElements || elements,
     interactiveElements: overrides.interactiveElements || elements,
-    fieldRegistry: overrides.fieldRegistry || [],
-    pageText: overrides.pageText || 'Product Pro configuration page. Choose your options.',
-    consoleErrors: overrides.consoleErrors || [],
-    networkErrors: overrides.networkErrors || [],
+    fieldRegistry: overrides.fieldRegistry ?? [],
+    pageText: overrides.pageText ?? 'Product Pro configuration page. Choose your options.',
+    consoleErrors: overrides.consoleErrors ?? [],
+    networkErrors: overrides.networkErrors ?? [],
     compactFinalState: overrides.compactFinalState,
     actionDetails: overrides.actionDetails
   };
@@ -135,6 +138,55 @@ function transactionResult(obs: PageObservation, actions: QaRunAction[]) {
 }
 
 describe('transaction/navigation reliability', () => {
+  it('prioritizes wait/re-observe for an empty observation after navigation', () => {
+    const empty = observation({
+      elementRegistry: [],
+      availableElements: [],
+      interactiveElements: [],
+      fieldRegistry: [],
+      pageText: '',
+      page: { url: 'https://example.test/configure', title: '' }
+    });
+    const progress = buildObjectiveProgress({
+      task: TASK,
+      intent: 'TRANSACTION_OR_CART',
+      observation: empty,
+      actions: [],
+      history: [{ action: 'click', targetId: 'buy', status: 'success', result: 'Navigated to configure page', url: 'https://example.test/configure' } as any]
+    });
+
+    expect(isEmptyObservation(empty)).toBe(true);
+    expect(progress.action_priority[0]).toContain('Wait 1s and re-observe');
+    expect(progress.warnings[0]).toContain('Observation is empty');
+  });
+
+  it('gates final CTA search when visible prerequisite option groups are unresolved', () => {
+    const obs = observation({
+      elementRegistry: [
+        element({ id: 'color_blue', type: 'radio', role: 'radio', description: 'Choose color Blue', selector: '#blue' }),
+        element({ id: 'size_large', type: 'radio', role: 'radio', description: 'Select size Large', selector: '#large' })
+      ],
+      pageText: 'Configure Product Pro. Choose color. Select size.'
+    });
+    const section = findNextUnresolvedSection({
+      task: TASK,
+      intent: 'TRANSACTION_OR_CART',
+      observation: obs,
+      actions: []
+    });
+    const progress = buildObjectiveProgress({
+      task: TASK,
+      intent: 'TRANSACTION_OR_CART',
+      observation: obs,
+      actions: [],
+      history: []
+    });
+
+    expect(section?.candidate_actions.map((action) => action.id)).toContain('color_blue');
+    expect(progress.final_cta_search_gated).toBe(true);
+    expect(progress.action_priority[0]).toContain('Resolve visible required section');
+  });
+
   it('splits separator-delimited content with an over-limit chunk without throwing', () => {
     const chunks = splitSafe(`${'a'.repeat(80)}\n\n${'b'.repeat(80)}`, 25);
 
@@ -251,6 +303,23 @@ describe('transaction/navigation reliability', () => {
     expect(repeatedCartViewNoProgress(actions)).toBe(true);
   });
 
+  it('records repeated no-progress scrolls so the planner changes strategy', () => {
+    const progress = buildObjectiveProgress({
+      task: TASK,
+      intent: 'TRANSACTION_OR_CART',
+      observation: observation({ elementRegistry: [element({ description: 'Choose option A', type: 'radio', role: 'radio' })] }),
+      actions: [],
+      history: [
+        { action: 'scroll', status: 'blocked', result: 'Blocked scroll loop: already scrolled without observable page progress.', url: 'https://example.test/product' },
+        { action: 'scroll', status: 'blocked', result: 'Blocked scroll loop: already scrolled without observable page progress.', url: 'https://example.test/product' },
+        { action: 'scroll', status: 'blocked', result: 'Blocked scroll loop: already scrolled without observable page progress.', url: 'https://example.test/product' }
+      ] as any
+    });
+
+    expect(progress.recent_no_progress_actions).toHaveLength(3);
+    expect(progress.action_priority.join(' ')).toContain('Resolve visible required section');
+  });
+
   it('generates milestone-based transaction acceptance criteria', () => {
     const plan = createTestPlan({ prompt: TASK, targetUrl: 'https://example.test' });
 
@@ -292,5 +361,41 @@ describe('transaction/navigation reliability', () => {
     expect(compact.pageTextExcerpt.length).toBeLessThanOrEqual(1000);
     expect(compact.candidateActions.length).toBeLessThanOrEqual(10);
     expect(compact.candidateActions.every((item) => item.label.length <= 40)).toBe(true);
+  });
+
+  it('models a configurable local product flow as options first, add second, cart verification last', () => {
+    const firstObservation = observation({
+      elementRegistry: [
+        element({ id: 'option_a', type: 'radio', role: 'radio', description: 'Choose option A', selector: '#option-a' }),
+        element({ id: 'option_b', type: 'radio', role: 'radio', description: 'Select option B', selector: '#option-b' })
+      ],
+      pageText: 'Configure Product Pro. Choose option A. Select option B.'
+    });
+    const firstProgress = buildObjectiveProgress({
+      task: TASK,
+      intent: 'TRANSACTION_OR_CART',
+      observation: firstObservation,
+      actions: [],
+      history: []
+    });
+    const finalObservation = observation({
+      page: { url: 'https://example.test/cart', title: 'Cart' },
+      elementRegistry: [element({ id: 'cart', description: 'Cart 1 item Product Pro', selector: '#cart' })],
+      fieldRegistry: [
+        field(1, { label: 'Option A', value: 'Selected' }),
+        field(2, { label: 'Option B', value: 'Selected' })
+      ],
+      pageText: 'Cart. Product Pro. Quantity 1. Checkout available.'
+    });
+    const result = transactionResult(finalObservation, [
+      successAction('click', 'Choose option A', { action_id: 'A001' }),
+      successAction('click', 'Select option B', { action_id: 'A002' }),
+      successAction('click', 'Add to Cart', { action_id: 'A003' })
+    ]);
+
+    expect(firstProgress.final_cta_search_gated).toBe(true);
+    expect(firstProgress.next_unresolved_section?.candidate_actions[0].id).toBe('option_a');
+    expect(result.status).toBe('PASS');
+    expect(result.assertions.find((assertion) => assertion.id === 'M6_CART_OR_BAG_VERIFIED')?.status).toBe('PASS');
   });
 });

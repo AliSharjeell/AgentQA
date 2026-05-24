@@ -314,11 +314,14 @@ export function categoryForRootCause(rootCause: QaRootCause | undefined): QaIssu
     case 'FIELD_REGISTRY_EMPTY': return 'VERIFIER_ISSUE';
     case 'NO_FIELDS_FOUND':
     case 'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED':
+    case 'PAGE_OBSERVATION_EMPTY':
     case 'GOAL_NOT_REACHED':
     case 'REQUIRED_AFFORDANCE_NOT_FOUND':
     case 'CTA_NOT_FOUND':
+    case 'CTA_NOT_FOUND_AFTER_PREREQUISITES':
     case 'REQUIRED_PREREQUISITES_UNRESOLVED':
     case 'NO_PROGRESS':
+    case 'BOT_OR_REGION_BLOCK':
     case 'AMBIGUOUS_STATE': return 'AGENT_ISSUE';
     case 'TEST_DATA_ISSUE': return 'TEST_DATA_ISSUE';
     case 'ENVIRONMENT_ISSUE': return 'ENVIRONMENT_ISSUE';
@@ -641,11 +644,14 @@ function decideVerdict(
     'AGENT_LIMITATION',
     'NO_FIELDS_FOUND',
     'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED',
+    'PAGE_OBSERVATION_EMPTY',
     'GOAL_NOT_REACHED',
     'REQUIRED_AFFORDANCE_NOT_FOUND',
     'CTA_NOT_FOUND',
+    'CTA_NOT_FOUND_AFTER_PREREQUISITES',
     'REQUIRED_PREREQUISITES_UNRESOLVED',
     'NO_PROGRESS',
+    'BOT_OR_REGION_BLOCK',
     'AMBIGUOUS_STATE'
   ];
   const failedAgent = assertions.find(a => a.required !== false && a.status === 'FAIL' && Boolean(a.rootCause && blockedRootCauses.includes(a.rootCause)));
@@ -869,10 +875,13 @@ function recommendationFor(rootCause: QaRootCause | undefined, status: QaVerdict
   if (rootCause === 'AGENT_LIMITATION') return 'Improve automation support or selector strategy, then rerun. Do not treat the blocked run as a website bug.';
   if (rootCause === 'NO_FIELDS_FOUND') return 'Rerun on a page or step with editable controls, or change the task if no form fields are expected.';
   if (rootCause === 'PAGE_NOT_INTERACTIVE_OR_OBSERVATION_FAILED') return 'Check that the page loaded and exposes interactive UI, then rerun with stronger observation evidence.';
+  if (rootCause === 'PAGE_OBSERVATION_EMPTY') return 'Wait for the page to finish rendering and rerun; if repeated, inspect load blockers or observation instrumentation.';
   if (rootCause === 'REQUIRED_AFFORDANCE_NOT_FOUND') return 'Verify the requested control exists and is visible, or adjust the task to an available affordance.';
   if (rootCause === 'CTA_NOT_FOUND') return 'Continue resolving prerequisites and scanning visible/sticky/footer regions; if no equivalent add action exists after that, rerun with CTA_NOT_FOUND evidence.';
+  if (rootCause === 'CTA_NOT_FOUND_AFTER_PREREQUISITES') return 'After required choices are resolved, inspect the full compact DOM for equivalent final actions before treating the run as blocked.';
   if (rootCause === 'REQUIRED_PREREQUISITES_UNRESOLVED') return 'Resolve or document the required visible choices before looking for the final action.';
   if (rootCause === 'NO_PROGRESS') return 'Stop repeated low-value actions and choose a new milestone-oriented tactic before rerunning.';
+  if (rootCause === 'BOT_OR_REGION_BLOCK') return 'Check whether bot protection, geofencing, consent, or region-specific availability blocked the flow, then rerun with that condition addressed.';
   if (rootCause === 'GOAL_NOT_REACHED') return 'Review the action trace and final DOM evidence, then rerun with clearer target state if needed.';
   if (rootCause === 'AMBIGUOUS_STATE') return 'Collect stronger page evidence or clarify the expected result before making a product bug claim.';
   if (rootCause === 'TEST_DATA_ISSUE') return 'Provide valid test data or credentials and rerun the scenario.';

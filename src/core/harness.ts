@@ -2119,6 +2119,14 @@ def execute_one(item):
         if seconds > 10:
             seconds = 10
         time.sleep(seconds)
+        for _ in range(10):
+            try:
+                ready = js("document.readyState")
+                if ready == "complete" or ready == "interactive":
+                    break
+            except Exception:
+                break
+            time.sleep(0.1)
         result = "Waited " + str(seconds) + " seconds"
     elif kind == "navigate":
         url = item.get("url")

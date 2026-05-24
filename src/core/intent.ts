@@ -331,8 +331,11 @@ export function detectGoalCompletion(input: {
   }
 
   if (intent === 'TRANSACTION_OR_CART') {
-    const addExecuted = /\badd\b.*\b(cart|bag|basket|product|item)\b/i.test(actionText) &&
-      !/\b(shopping bag|view bag|view cart|open bag|open cart|review bag|review cart)\b/i.test(actionText);
+    const addExecuted = actions.some((action) => {
+      const text = `${action.action} ${action.target || ''} ${action.label || ''} ${String(action.input ?? '')}`;
+      return /\badd\b.*\b(cart|bag|basket|product|item)\b/i.test(text) &&
+        !/\b(shopping bag|view bag|view cart|open bag|open cart|review bag|review cart)\b/i.test(text);
+    });
     const cartState = /\b(cart|bag|basket|checkout|quantity|item added|added|subtotal)\b/i.test(combinedState);
     const passed = addExecuted && cartState && hasKeywordEvidence;
     return {
