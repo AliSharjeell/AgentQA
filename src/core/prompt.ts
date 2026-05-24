@@ -257,7 +257,7 @@ Important:
 Return exactly this JSON shape:
 {
   "thought": "Short reasoning for the next action.",
-  "pageSummary": "Very brief summary of what you currently see on the screen (e.g. Shopping cart with 1 item, or specific product page).",
+  "pageSummary": "Detailed summary of current page state, highlighting visible inputs, selected/unselected options, and whether key buttons (like Checkout/Buy) are locked, disabled, or clickable.",
   "plan": [
     { "step": 1, "description": "Open relevant page", "status": "DONE" },
     { "step": 2, "description": "Current work", "status": "CURRENT" }

@@ -1104,18 +1104,20 @@ export async function runQaTask(options: RunTaskOptions): Promise<TaskResult> {
 
     const estimatedHistoryChars = JSON.stringify(history).length;
     if (estimatedHistoryChars > 80000 && history.length > 5) {
-      addStep('Compressing history context...', 'running');
-      onStep({ instruction: 'Compressing history context...', status: 'running' });
+      addStep('Compacting memory...', 'running');
+      onStep({ instruction: 'Compacting memory...', status: 'running' });
+      const keepCount = 5;
+      const toCompress = history.slice(0, history.length - keepCount);
+      const toKeep = history.slice(history.length - keepCount);
       try {
-        const summaryPrompt = `You are a QA Agent context compressor.\nYour task is to summarize the following history of QA actions and reasoning into a concise but highly detailed sequence.\nRetain the critical logic, step numbers, and state changes, but compress the text.\nHistory to summarize:\n${JSON.stringify(history)}`;
+        const summaryPrompt = `You are a QA Agent context compressor.\nYour task is to summarize the following history of QA actions and reasoning into a concise but highly detailed sequence.\nRetain the critical logic, step numbers, and state changes, but compress the text.\nHistory to summarize:\n${JSON.stringify(toCompress)}`;
         const summaryText = await callForScript(settings, summaryPrompt, { phase: 'planning' });
-        history.splice(0, history.length, { step: 0, action: 'history_summary', status: 'success', result: summaryText, url: currentUrl });
-        addStep('History compressed', 'done');
-        onStep({ instruction: 'History compressed', status: 'done' });
+        history.splice(0, history.length, { step: 0, action: 'history_summary', status: 'success', result: summaryText, url: currentUrl }, ...toKeep);
+        addStep('Memory compacted', 'done');
+        onStep({ instruction: 'Memory compacted', status: 'done' });
       } catch (e) {
-        addStep('History compression failed, truncating...', 'done');
-        const truncated = history.slice(-5);
-        history.splice(0, history.length, ...truncated);
+        addStep('Memory compaction failed, truncating...', 'done');
+        history.splice(0, history.length, ...toKeep);
       }
     }
 
