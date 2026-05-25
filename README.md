@@ -32,6 +32,7 @@ AgentQA operates directly on the DOM, making it compatible with any website or s
 ### Prerequisites
 
 - **Node.js 20+** and **npm 10+**
+- **browser-harness** as the low-level CDP execution backend. The npm installer and runtime check try to install it automatically; if that fails, install it manually with `uv tool install git+https://github.com/browser-use/browser-harness`
 - An API key for **OpenAI** or **Anthropic**
 
 ---
@@ -256,11 +257,15 @@ skills/
 
 ## How It Works
 
-1. **Observe** — Scrapes the page DOM for interactive elements (buttons, inputs, links) with coordinates
-2. **Plan** — Sends the DOM observation + user prompt to an LLM (Claude/GPT) which generates a Python browser-harness script
-3. **Act** — Pipes the script to `browser-harness` which controls Chrome via CDP (fills forms, clicks buttons, navigates)
-4. **Retry** — If the script fails, retries up to 3 times with the error context
-5. **Report** — Returns structured results with pass/fail, step details, and a summary
+AgentQA uses a custom QA orchestration harness engineered for long-running browser tasks. It preserves detailed action history while keeping LLM context usage bounded, plans the next safe action from the current DOM state, self-corrects after errors or blocked states, and produces structured evidence/reporting.
+
+`browser-harness` is used only as the low-level CDP browser execution backend. AgentQA's planning, memory, retry, validation, reporting, and action protocol live in this repository.
+
+1. **Observe** — AgentQA inspects the page DOM for interactive elements (buttons, inputs, links), coordinates, page text, console errors, and network errors
+2. **Plan** — The custom harness sends the compact observation, task history, and user prompt to an LLM (Claude/GPT) to choose the next structured action
+3. **Act** — AgentQA converts that action into a browser script and pipes it to `browser-harness`, which controls Chrome via CDP
+4. **Retry / Self-correct** — If an action fails or progress stalls, AgentQA carries forward error context and history to choose a safer next step
+5. **Report** — Returns structured results with pass/fail, step details, evidence, screenshots, and a summary
 
 ### Page Text Reading & Extraction
 
@@ -277,7 +282,8 @@ To make browser actions clear and observable in the live preview window:
 ### Key Design Decisions
 
 - **`set_value()` over `fill_input()`** — Uses JavaScript to set input values progressively (via prototype descriptor + event dispatch) instead of CDP key events, which avoids double-typing.
-- **No browser bundled** — Uses `browser-harness` which manages its own Chrome daemon. No Playwright browser download required.
+- **Custom AgentQA harness** — Planning, context preservation, action history, retry/self-correction, validation, and reporting are implemented in this repository.
+- **CDP backend via browser-harness** — Uses `browser-harness` only for low-level Chrome/CDP execution. No Playwright browser download required.
 - **Shared engine** — `src/core/` has zero Electron imports.
 - **Step budget extension** — When the agent hits its step limit near completion, a secondary LLM can grant a bounded 1–15 step extension on high-confidence near-completion tasks.
 
@@ -303,7 +309,8 @@ To make browser actions clear and observable in the live preview window:
 | Frontend | React 18 + TypeScript |
 | Styling | Tailwind CSS 3 |
 | Icons | Lucide React |
-| Browser automation | browser-harness (CDP) |
+| QA harness / orchestration | Custom AgentQA engine |
+| Browser execution backend | browser-harness (CDP) |
 | AI | Anthropic Claude / OpenAI GPT |
 | Language | TypeScript 5 (ES2022) |
 
@@ -367,7 +374,11 @@ The AI agent follows these rules when testing:
 
 ### "Browser-harness could not be started"
 
-Install it: `uv tool install git+https://github.com/browser-use/browser-harness`
+AgentQA tries to install/check `browser-harness` automatically during npm install and again at runtime. If it still cannot be started, install it manually:
+
+```bash
+uv tool install git+https://github.com/browser-use/browser-harness
+```
 
 ### Double-typing in form fields
 
