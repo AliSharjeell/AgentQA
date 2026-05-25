@@ -32,7 +32,6 @@ AgentQA operates directly on the DOM, making it compatible with any website or s
 ### Prerequisites
 
 - **Node.js 20+** and **npm 10+**
-- **browser-harness** — `uv tool install git+https://github.com/browser-use/browser-harness`
 - An API key for **OpenAI** or **Anthropic**
 
 ---
